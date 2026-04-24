@@ -22,17 +22,21 @@ const MARKETDATA_BASE = 'https://api.marketdata.app/v1'
 // Google Sheets write client (service account)
 let sheetsClient = null
 try {
-  const b64 = process.env.GOOGLE_SERVICE_ACCOUNT_B64
-  if (b64) {
-    const creds = JSON.parse(Buffer.from(b64, 'base64').toString('utf8'))
+  const clientEmail = process.env.GOOGLE_CLIENT_EMAIL
+  const privateKey  = (process.env.GOOGLE_PRIVATE_KEY || '').replace(/\\n/g, '\n')
+  if (clientEmail && privateKey) {
     const auth = new google.auth.GoogleAuth({
-      credentials: creds,
+      credentials: {
+        type: 'service_account',
+        client_email: clientEmail,
+        private_key: privateKey,
+      },
       scopes: ['https://www.googleapis.com/auth/spreadsheets'],
     })
     sheetsClient = google.sheets({ version: 'v4', auth })
     console.log('Google Sheets write client: ✓ initialized')
   } else {
-    console.warn('Google Sheets write client: ✗ GOOGLE_SERVICE_ACCOUNT_B64 not set')
+    console.warn('Google Sheets write client: ✗ GOOGLE_CLIENT_EMAIL or GOOGLE_PRIVATE_KEY not set')
   }
 } catch (err) {
   console.error('Google Sheets write client init failed:', err.message)
