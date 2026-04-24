@@ -14,11 +14,15 @@ export async function saveSnapshot(values: Omit<HistoryEntry, 'date' | 'time'>):
   const now = new Date()
   const dateStr = now.toLocaleDateString('sv-SE') // "2026-04-24"
   const timeStr = now.toLocaleString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true })
-  await fetch(`${API_BASE}/api/history`, {
+  const res = await fetch(`${API_BASE}/api/history`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ date: dateStr, time: timeStr, ...values }),
   })
+  if (!res.ok) {
+    const text = await res.text().catch(() => res.statusText)
+    throw new Error(`History save failed (${res.status}): ${text}`)
+  }
 }
 
 export async function loadHistory(): Promise<HistoryEntry[]> {

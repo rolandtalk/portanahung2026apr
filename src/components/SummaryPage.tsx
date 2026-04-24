@@ -46,7 +46,8 @@ export default function SummaryPage({ portfolios, onSelectPortfolio, lastRefresh
     setRefreshError(null)
     try {
       await onRefresh()
-      loadHistory().then(setHistory)
+      const entries = await loadHistory()
+      setHistory(entries)
     } catch (err: any) {
       setRefreshError(err.message || 'Failed to fetch quotes')
     } finally {
