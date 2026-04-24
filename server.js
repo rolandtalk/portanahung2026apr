@@ -221,6 +221,24 @@ app.get('/api/history', async (req, res) => {
 })
 
 /**
+ * DELETE /api/history
+ * Clears all snapshot rows from the HISTORY sheet (keeps header).
+ */
+app.delete('/api/history', async (_req, res) => {
+  if (!sheetsClient) return res.status(503).json({ error: 'Sheets not configured' })
+  try {
+    await sheetsClient.spreadsheets.values.clear({
+      spreadsheetId: SHEET_ID,
+      range: 'HISTORY!A2:G',
+    })
+    console.log('History: cleared all rows')
+    res.json({ ok: true })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+/**
  * POST /api/history
  * Appends or replaces today's snapshot row in the HISTORY sheet tab.
  * Body: { date, time, summary, CUB, PSC, DBS, FT }
