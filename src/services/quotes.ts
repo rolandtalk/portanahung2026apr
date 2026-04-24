@@ -6,10 +6,12 @@ export interface QuoteResult {
   error?: boolean
 }
 
+const API_BASE = (import.meta.env.VITE_API_URL as string) || ''
+
 export async function fetchQuotes(symbols: string[]): Promise<Record<string, QuoteResult>> {
   if (symbols.length === 0) return {}
   const query = symbols.join(',')
-  const res = await fetch(`/api/quotes?symbols=${encodeURIComponent(query)}`)
+  const res = await fetch(`${API_BASE}/api/quotes?symbols=${encodeURIComponent(query)}`)
   if (!res.ok) {
     throw new Error(`Quote API error: ${res.status} ${res.statusText}`)
   }

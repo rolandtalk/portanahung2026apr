@@ -1,8 +1,10 @@
 import { Holding, PortfolioKey } from '../types'
 
+const API_BASE = (import.meta.env.VITE_API_URL as string) || ''
+
 export async function loadPortfolioFromSheet(tab: PortfolioKey): Promise<Holding[] | null> {
   try {
-    const res = await fetch(`/api/sheet/${tab}`)
+    const res = await fetch(`${API_BASE}/api/sheet/${tab}`)
     if (!res.ok) return null
     const data = await res.json()
     if (!Array.isArray(data.holdings) || data.holdings.length === 0) return null
@@ -35,7 +37,7 @@ export async function loadAllPortfoliosFromSheet(
 }
 
 export async function writePortfolioToSheet(tab: PortfolioKey, holdings: Holding[]): Promise<void> {
-  const res = await fetch(`/api/sheet/${tab}`, {
+  const res = await fetch(`${API_BASE}/api/sheet/${tab}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
