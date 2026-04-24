@@ -14,6 +14,7 @@
   "dependencies": {
     "cors": "^2.8.5",
     "express": "^4.21.1",
+    "googleapis": "^171.4.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "yahoo-finance2": "^2.13.3"

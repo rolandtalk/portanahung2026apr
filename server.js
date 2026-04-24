@@ -2,6 +2,7 @@ import express from 'express'
 import cors from 'cors'
 import { readFileSync } from 'fs'
 import { join, resolve } from 'path'
+import { google } from 'googleapis'
 
 // Load .env manually (no dotenv dependency needed)
 try {
@@ -17,6 +18,25 @@ try {
 
 const MARKETDATA_TOKEN = process.env.MARKETDATA_TOKEN
 const MARKETDATA_BASE = 'https://api.marketdata.app/v1'
+
+// Google Sheets write client (service account)
+let sheetsClient = null
+try {
+  const b64 = process.env.GOOGLE_SERVICE_ACCOUNT_B64
+  if (b64) {
+    const creds = JSON.parse(Buffer.from(b64, 'base64').toString('utf8'))
+    const auth = new google.auth.GoogleAuth({
+      credentials: creds,
+      scopes: ['https://www.googleapis.com/auth/spreadsheets'],
+    })
+    sheetsClient = google.sheets({ version: 'v4', auth })
+    console.log('Google Sheets write client: ✓ initialized')
+  } else {
+    console.warn('Google Sheets write client: ✗ GOOGLE_SERVICE_ACCOUNT_B64 not set')
+  }
+} catch (err) {
+  console.error('Google Sheets write client init failed:', err.message)
+}
 
 const app = express()
 const PORT = 3001
@@ -138,6 +158,46 @@ app.get('/api/sheet/:tab', async (req, res) => {
   } catch (err) {
     console.error('Sheet fetch error:', err)
     res.status(500).json({ error: 'Failed to fetch sheet', detail: err.message })
+  }
+})
+
+/**
+ * POST /api/sheet/:tab
+ * Writes holdings back to the Google Sheet tab (replaces all rows after header).
+ * Body: { holdings: [{ symbol, shares, cost }] }
+ */
+app.post('/api/sheet/:tab', async (req, res) => {
+  if (!sheetsClient) {
+    return res.status(503).json({ error: 'Google Sheets write client not configured' })
+  }
+  const tab = req.params.tab.toUpperCase()
+  const { holdings } = req.body
+  if (!Array.isArray(holdings)) {
+    return res.status(400).json({ error: 'holdings array required' })
+  }
+
+  try {
+    // Clear everything below the header row
+    await sheetsClient.spreadsheets.values.clear({
+      spreadsheetId: SHEET_ID,
+      range: `${tab}!A2:Z`,
+    })
+
+    if (holdings.length > 0) {
+      const rows = holdings.map(h => [h.symbol, h.shares, h.cost])
+      await sheetsClient.spreadsheets.values.update({
+        spreadsheetId: SHEET_ID,
+        range: `${tab}!A2`,
+        valueInputOption: 'RAW',
+        requestBody: { values: rows },
+      })
+    }
+
+    console.log(`Sheet ${tab}: wrote ${holdings.length} holdings`)
+    res.json({ ok: true, tab, count: holdings.length })
+  } catch (err) {
+    console.error('Sheet write error:', err.message)
+    res.status(500).json({ error: 'Failed to write to sheet', detail: err.message })
   }
 })
 

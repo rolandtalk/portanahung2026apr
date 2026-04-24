@@ -33,3 +33,17 @@ export async function loadAllPortfoliosFromSheet(
   }
   return out
 }
+
+export async function writePortfolioToSheet(tab: PortfolioKey, holdings: Holding[]): Promise<void> {
+  const res = await fetch(`/api/sheet/${tab}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      holdings: holdings.map(h => ({ symbol: h.symbol, shares: h.shares, cost: h.cost })),
+    }),
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}))
+    throw new Error(err.error || `Sheet write failed: ${res.status}`)
+  }
+}

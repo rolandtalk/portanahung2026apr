@@ -1,8 +1,8 @@
-import React, { useState, useCallback, useEffect } from 'react'
+import React, { useState, useCallback, useEffect, useRef } from 'react'
 import { Holding, PortfolioKey, PortfolioStats } from './types'
 import SummaryPage from './components/SummaryPage'
 import PortfolioPage from './components/PortfolioPage'
-import { loadAllPortfoliosFromSheet } from './services/sheets'
+import { loadAllPortfoliosFromSheet, writePortfolioToSheet } from './services/sheets'
 import { fetchQuotes } from './services/quotes'
 import { saveSnapshot } from './services/history'
 
@@ -155,10 +155,9 @@ export default function App() {
     hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true
   }))
 
-  // On startup: load shares/cost from Google Sheets, preserve cached prices
-  useEffect(() => {
+  const syncFromSheet = useCallback((showStatus = true) => {
     const cached = loadPortfolios()
-    loadAllPortfoliosFromSheet(PORTFOLIO_KEYS).then(sheetData => {
+    return loadAllPortfoliosFromSheet(PORTFOLIO_KEYS).then(sheetData => {
       const merged = { ...cached }
       let updated = 0
       for (const key of PORTFOLIO_KEYS) {
@@ -176,10 +175,18 @@ export default function App() {
       if (updated > 0) {
         setPortfolios(merged)
         savePortfolios(merged)
-        setSheetStatus(`Loaded from Google Sheets`)
+        if (showStatus) setSheetStatus('Synced from Google Sheets')
       } else {
-        setSheetStatus('Using cached data')
+        if (showStatus) setSheetStatus('Using cached data')
       }
+      return merged
+    })
+  }, [])
+
+  // On startup: load from Google Sheets
+  useEffect(() => {
+    setSheetLoading(true)
+    syncFromSheet(true).then(() => {
       setSheetLoading(false)
       setTimeout(() => setSheetStatus(null), 4000)
     }).catch(() => {
@@ -189,16 +196,38 @@ export default function App() {
     })
   }, [])
 
+  // Re-sync from Sheet when window regains focus (cross-device sync)
+  useEffect(() => {
+    const onFocus = () => {
+      syncFromSheet(false).catch(() => {})
+    }
+    window.addEventListener('focus', onFocus)
+    return () => window.removeEventListener('focus', onFocus)
+  }, [syncFromSheet])
+
+  // Debounce timers per portfolio key for sheet writes
+  const sheetWriteTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({})
+
   const updateHoldings = useCallback((key: PortfolioKey, holdings: Holding[]) => {
     setPortfolios(prev => {
       const next = { ...prev, [key]: holdings }
       savePortfolios(next)
+      // Debounced write to Google Sheet (1.5s after last edit)
+      clearTimeout(sheetWriteTimers.current[key])
+      sheetWriteTimers.current[key] = setTimeout(() => {
+        writePortfolioToSheet(key, holdings).catch(err =>
+          console.warn(`Sheet write [${key}] failed:`, err.message)
+        )
+      }, 1500)
       return next
     })
   }, [])
 
   const handleSave = useCallback((key: PortfolioKey) => {
     savePortfolios(portfolios)
+    writePortfolioToSheet(key, portfolios[key]).catch(err =>
+      console.warn(`Sheet write [${key}] failed:`, err.message)
+    )
   }, [portfolios])
 
   const handleRefreshAll = useCallback(async () => {
