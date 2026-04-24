@@ -3,6 +3,8 @@ import { Holding, PortfolioKey, PortfolioStats } from './types'
 import SummaryPage from './components/SummaryPage'
 import PortfolioPage from './components/PortfolioPage'
 import { loadAllPortfoliosFromSheet } from './services/sheets'
+import { fetchQuotes } from './services/quotes'
+import { saveSnapshot } from './services/history'
 
 const PORTFOLIO_KEYS: PortfolioKey[] = ['CUB', 'PSC', 'DBS', 'FT']
 
@@ -58,21 +60,20 @@ const DEFAULT_PORTFOLIOS: Record<PortfolioKey, Holding[]> = {
   FT: [
     { symbol: 'AAPL',  shares: 1,   cost: 266.02,    price: 272.75,  dayChange:  2.47 },
     { symbol: 'ARKK',  shares: 1,   cost: 46.87,     price: 79.12,   dayChange:  2.25 },
-    { symbol: 'ARKX',  shares: 581, cost: 31.75986,  price: 33.82,   dayChange:  1.35 },
+    { symbol: 'ARKX',  shares: 681, cost: 32.00805,  price: 33.82,   dayChange:  1.35 },
     { symbol: 'AVGO',  shares: 34,  cost: 320.34912, price: 416.00,  dayChange:  3.44 },
     { symbol: 'BABA',  shares: 35,  cost: 125.95714, price: 137.31,  dayChange:  1.43 },
     { symbol: 'COIN',  shares: 6,   cost: 209.76667, price: 207.09,  dayChange:  5.69 },
     { symbol: 'EWP',   shares: 30,  cost: 49.20,     price: 56.81,   dayChange:  0.07 },
     { symbol: 'EWU',   shares: 1,   cost: 32.95,     price: 47.21,   dayChange:  0.56 },
     { symbol: 'EWY',   shares: 50,  cost: 147.334,   price: 154.24,  dayChange:  5.08 },
-    { symbol: 'FLY',   shares: 110, cost: 36.721,    price: 41.92,   dayChange: -0.40 },
+    { symbol: 'FLY',   shares: 290, cost: 38.21141,  price: 41.92,   dayChange: -0.40 },
     { symbol: 'GEV',   shares: 51,  cost: 877.84314, price: 1119.54, dayChange: 12.94 },
     { symbol: 'GOOG',  shares: 58,  cost: 303.90379, price: 335.41,  dayChange:  1.49 },
-    { symbol: 'HON',   shares: 20,  cost: 226.60,    price: 219.91,  dayChange: -1.04 },
-    { symbol: 'HWM',   shares: 95,  cost: 240.05516, price: 237.17,  dayChange: -4.26 },
+    { symbol: 'HWM',   shares: 100, cost: 239.9074,  price: 237.17,  dayChange: -4.26 },
     { symbol: 'HYG',   shares: 30,  cost: 77.66,     price: 80.50,   dayChange:  0.16 },
-    { symbol: 'INTC',  shares: 80,  cost: 65.17312,  price: 66.23,   dayChange: -0.05 },
-    { symbol: 'IONQ',  shares: 5,   cost: 46.20,     price: 48.40,   dayChange:  4.58 },
+    { symbol: 'INTC',  shares: 120, cost: 65.60042,  price: 66.23,   dayChange: -0.05 },
+    { symbol: 'IONQ',  shares: 160, cost: 45.44875,  price: 48.40,   dayChange:  4.58 },
     { symbol: 'JETS',  shares: 10,  cost: 20.60,     price: 26.00,   dayChange: -2.80 },
     { symbol: 'KRE',   shares: 1,   cost: 35.00,     price: 69.74,   dayChange:  0.16 },
     { symbol: 'LEMB',  shares: 1,   cost: 36.00,     price: 42.32,   dayChange:  0.24 },
@@ -80,21 +81,22 @@ const DEFAULT_PORTFOLIOS: Record<PortfolioKey, Holding[]> = {
     { symbol: 'LRCX',  shares: 149, cost: 227.9445,  price: 262.31,  dayChange:  1.52 },
     { symbol: 'MCHI',  shares: 1,   cost: 41.40,     price: 58.44,   dayChange:  0.48 },
     { symbol: 'MRVL',  shares: 110, cost: 108.04091, price: 155.56,  dayChange:  2.81 },
-    { symbol: 'MSTR',  shares: 35,  cost: 166.80,    price: 178.69,  dayChange:  8.98 },
+    { symbol: 'MSTR',  shares: 45,  cost: 169.62222, price: 178.69,  dayChange:  8.98 },
     { symbol: 'MU',    shares: 1,   cost: 420.00,    price: 476.38,  dayChange:  6.01 },
+    { symbol: 'NOW',   shares: 195, cost: 87.03716,  price: 85.99,   dayChange: -16.57 },
     { symbol: 'NUGT',  shares: 1,   cost: 230.60,    price: 198.54,  dayChange:  3.86 },
     { symbol: 'NVDA',  shares: 70,  cost: 171.775,   price: 201.48,  dayChange:  0.80 },
     { symbol: 'PAVE',  shares: 1,   cost: 26.37,     price: 55.20,   dayChange: -0.06 },
     { symbol: 'PHO',   shares: 1,   cost: 56.24,     price: 69.81,   dayChange: -0.06 },
-    { symbol: 'PLTR',  shares: 51,  cost: 139.29196, price: 151.03,  dayChange:  3.47 },
+    { symbol: 'PLTR',  shares: 56,  cost: 139.74804, price: 151.03,  dayChange:  3.47 },
     { symbol: 'RKLB',  shares: 250, cost: 64.3568,   price: 90.18,   dayChange:  4.08 },
-    { symbol: 'SHOP',  shares: 41,  cost: 128.2561,  price: 132.22,  dayChange:  0.83 },
+    { symbol: 'SHOP',  shares: 51,  cost: 127.40196, price: 132.22,  dayChange:  0.83 },
     { symbol: 'SNDK',  shares: 1,   cost: 891.00,    price: 937.26,  dayChange:  3.74 },
     { symbol: 'TMV',   shares: 1,   cost: 29.68,     price: 36.83,   dayChange: -1.34 },
     { symbol: 'TNA',   shares: 1,   cost: 31.58,     price: 60.38,   dayChange:  1.84 },
     { symbol: 'TS',    shares: 20,  cost: 54.10,     price: 61.83,   dayChange:  1.78 },
-    { symbol: 'TSLA',  shares: 28,  cost: 381.05643, price: 390.40,  dayChange:  1.03 },
-    { symbol: 'TWST',  shares: 50,  cost: 60.99,     price: 63.74,   dayChange:  1.80 },
+    { symbol: 'TSLA',  shares: 35,  cost: 379.56514, price: 390.40,  dayChange:  1.03 },
+    { symbol: 'TWST',  shares: 70,  cost: 60.73571,  price: 63.74,   dayChange:  1.80 },
     { symbol: 'UBER',  shares: 1,   cost: 86.77,     price: 75.81,   dayChange: -1.88 },
     { symbol: 'XLE',   shares: 1,   cost: 56.90,     price: 56.44,   dayChange:  1.01 },
     { symbol: 'XLF',   shares: 1,   cost: 46.72,     price: 52.26,   dayChange: -0.09 },
@@ -199,6 +201,34 @@ export default function App() {
     savePortfolios(portfolios)
   }, [portfolios])
 
+  const handleRefreshAll = useCallback(async () => {
+    const allSymbols = PORTFOLIO_KEYS.flatMap(key => portfolios[key].map(h => h.symbol))
+    const uniqueSymbols = [...new Set(allSymbols)]
+    const quotes = await fetchQuotes(uniqueSymbols)
+    const updated = { ...portfolios }
+    for (const key of PORTFOLIO_KEYS) {
+      updated[key] = portfolios[key].map(h => {
+        const q = quotes[h.symbol]
+        if (!q || q.error || q.price === null) return h
+        return { ...h, price: q.price, dayChange: q.dayChangePct ?? h.dayChange }
+      })
+    }
+    setPortfolios(updated)
+    savePortfolios(updated)
+    const ts = new Date().toLocaleString('en-US', {
+      month: 'short', day: '2-digit', year: 'numeric',
+      hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true,
+    })
+    setLastRefreshed(ts)
+    saveSnapshot({
+      summary: calcStats(Object.values(updated).flat()).totalMarketValue,
+      CUB: calcStats(updated.CUB).totalMarketValue,
+      PSC: calcStats(updated.PSC).totalMarketValue,
+      DBS: calcStats(updated.DBS).totalMarketValue,
+      FT:  calcStats(updated.FT).totalMarketValue,
+    })
+  }, [portfolios])
+
   return (
     <div className="min-h-screen bg-[#0d1117] text-[#f0f6fc]">
       {/* Google Sheets status banner */}
@@ -241,6 +271,7 @@ export default function App() {
             portfolios={portfolios}
             onSelectPortfolio={(key) => setView(key)}
             lastRefreshed={lastRefreshed}
+            onRefresh={handleRefreshAll}
           />
         ) : (
           <PortfolioPage
