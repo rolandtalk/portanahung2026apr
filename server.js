@@ -325,4 +325,7 @@ app.get('*', (_req, res) => {
 app.listen(PORT, () => {
   console.log(`App running at http://localhost:${PORT}`)
   console.log(`Using marketdata.app token: ${MARKETDATA_TOKEN ? '✓ loaded' : '✗ MISSING'}`)
+  // Debug: list all env var names available at runtime
+  const keys = Object.keys(process.env).sort()
+  console.log(`ENV KEYS (${keys.length} total):`, keys.join(', '))
 })
