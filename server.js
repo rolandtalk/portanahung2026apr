@@ -319,7 +319,21 @@ app.get('/api/env-check', (_req, res) => {
   const email  = process.env.GOOGLE_CLIENT_EMAIL  || ''
   const key    = process.env.GOOGLE_PRIVATE_KEY    || ''
   const token  = process.env.MARKETDATA_TOKEN      || ''
+  const b64    = process.env.GOOGLE_SERVICE_ACCOUNT_B64 || ''
+
+  let b64Status = '✗ MISSING'
+  if (b64) {
+    try {
+      const decoded = Buffer.from(b64, 'base64').toString('utf8')
+      const parsed  = JSON.parse(decoded)
+      b64Status = `✓ set & valid JSON (${b64.length} b64 chars, email: ${parsed.client_email})`
+    } catch (e) {
+      b64Status = `✗ set (${b64.length} b64 chars) but JSON parse failed: ${e.message}`
+    }
+  }
+
   res.json({
+    GOOGLE_SERVICE_ACCOUNT_B64: b64Status,
     GOOGLE_CLIENT_EMAIL:  email  ? `✓ set (${email.length} chars, starts: ${email.slice(0,12)}…)` : '✗ MISSING',
     GOOGLE_PRIVATE_KEY:   key    ? `✓ set (${key.length} chars, starts: ${key.slice(0,30)}…)` : '✗ MISSING',
     MARKETDATA_TOKEN:     token  ? `✓ set (${token.length} chars)` : '✗ MISSING',
