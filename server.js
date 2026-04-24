@@ -324,6 +324,7 @@ app.post('/api/sheet/:tab', async (req, res) => {
  * Shows whether key env vars are present (never reveals actual values).
  */
 app.get('/api/env-check', (_req, res) => {
+  const BUILD_VER = 'v5-bundled'
   const email  = process.env.GOOGLE_CLIENT_EMAIL  || ''
   const key    = process.env.GOOGLE_PRIVATE_KEY    || ''
   const token  = process.env.MARKETDATA_TOKEN      || ''
@@ -347,6 +348,7 @@ app.get('/api/env-check', (_req, res) => {
     MARKETDATA_TOKEN:     token  ? `✓ set (${token.length} chars)` : '✗ MISSING',
     sheetsClientReady:    !!sheetsClient,
     NODE_ENV:             process.env.NODE_ENV || '(not set)',
+    BUILD_VER,
   })
 })
 
