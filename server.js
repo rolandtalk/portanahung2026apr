@@ -21,6 +21,7 @@ const MARKETDATA_BASE = 'https://api.marketdata.app/v1'
 
 // Google Sheets write client (service account)
 let sheetsClient = null
+let sheetsInitError = null
 try {
   let credentials = null
 
@@ -58,6 +59,7 @@ try {
     console.warn('Google Sheets write client: ✗ no credentials found (set GOOGLE_SERVICE_ACCOUNT_B64 or GOOGLE_CLIENT_EMAIL+GOOGLE_PRIVATE_KEY)')
   }
 } catch (err) {
+  sheetsInitError = err.message
   console.error('Google Sheets write client init failed:', err.message)
 }
 
@@ -347,6 +349,7 @@ app.get('/api/env-check', (_req, res) => {
     GOOGLE_PRIVATE_KEY:   key    ? `✓ set (${key.length} chars, starts: ${key.slice(0,30)}…)` : '✗ MISSING',
     MARKETDATA_TOKEN:     token  ? `✓ set (${token.length} chars)` : '✗ MISSING',
     sheetsClientReady:    !!sheetsClient,
+    sheetsInitError:      sheetsInitError || null,
     NODE_ENV:             process.env.NODE_ENV || '(not set)',
     BUILD_VER,
   })
