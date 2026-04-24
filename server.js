@@ -35,9 +35,13 @@ try {
 
   // Fallback: decode GOOGLE_SERVICE_ACCOUNT_B64 from env
   if (!credentials && process.env.GOOGLE_SERVICE_ACCOUNT_B64) {
-    const json = Buffer.from(process.env.GOOGLE_SERVICE_ACCOUNT_B64, 'base64').toString('utf8')
-    credentials = JSON.parse(json)
-    console.log('Google Sheets: using GOOGLE_SERVICE_ACCOUNT_B64')
+    try {
+      const json = Buffer.from(process.env.GOOGLE_SERVICE_ACCOUNT_B64, 'base64').toString('utf8')
+      credentials = JSON.parse(json)
+      console.log('Google Sheets: using GOOGLE_SERVICE_ACCOUNT_B64')
+    } catch (e) {
+      console.warn('GOOGLE_SERVICE_ACCOUNT_B64 parse failed:', e.message, '— trying bundled fallback')
+    }
   }
 
   // Last resort: use bundled credentials (personal portfolio app)
