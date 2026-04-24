@@ -300,6 +300,23 @@ app.post('/api/sheet/:tab', async (req, res) => {
   }
 })
 
+/**
+ * GET /api/env-check
+ * Shows whether key env vars are present (never reveals actual values).
+ */
+app.get('/api/env-check', (_req, res) => {
+  const email  = process.env.GOOGLE_CLIENT_EMAIL  || ''
+  const key    = process.env.GOOGLE_PRIVATE_KEY    || ''
+  const token  = process.env.MARKETDATA_TOKEN      || ''
+  res.json({
+    GOOGLE_CLIENT_EMAIL:  email  ? `✓ set (${email.length} chars, starts: ${email.slice(0,12)}…)` : '✗ MISSING',
+    GOOGLE_PRIVATE_KEY:   key    ? `✓ set (${key.length} chars, starts: ${key.slice(0,30)}…)` : '✗ MISSING',
+    MARKETDATA_TOKEN:     token  ? `✓ set (${token.length} chars)` : '✗ MISSING',
+    sheetsClientReady:    !!sheetsClient,
+    NODE_ENV:             process.env.NODE_ENV || '(not set)',
+  })
+})
+
 // Catch-all: serve index.html for React client-side routing
 app.get('*', (_req, res) => {
   res.sendFile(join(process.cwd(), 'dist', 'index.html'))
