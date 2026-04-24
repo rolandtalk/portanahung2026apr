@@ -8,23 +8,26 @@ export interface HistoryEntry {
   FT: number
 }
 
-const HISTORY_KEY = 'portanahung-history-v1'
+const API_BASE = import.meta.env.DEV ? '' : 'https://portanahung2026apr-production.up.railway.app'
 
-export function saveSnapshot(values: Omit<HistoryEntry, 'date' | 'time'>): void {
+export async function saveSnapshot(values: Omit<HistoryEntry, 'date' | 'time'>): Promise<void> {
   const now = new Date()
   const dateStr = now.toLocaleDateString('sv-SE') // "2026-04-24"
   const timeStr = now.toLocaleString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true })
-  const entry: HistoryEntry = { date: dateStr, time: timeStr, ...values }
-  try {
-    const existing: HistoryEntry[] = JSON.parse(localStorage.getItem(HISTORY_KEY) || '[]')
-    const filtered = existing.filter(e => e.date !== dateStr)
-    const updated = [entry, ...filtered].slice(0, 60)
-    localStorage.setItem(HISTORY_KEY, JSON.stringify(updated))
-  } catch { /* ignore */ }
+  await fetch(`${API_BASE}/api/history`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ date: dateStr, time: timeStr, ...values }),
+  })
 }
 
-export function loadHistory(): HistoryEntry[] {
+export async function loadHistory(): Promise<HistoryEntry[]> {
   try {
-    return JSON.parse(localStorage.getItem(HISTORY_KEY) || '[]')
-  } catch { return [] }
+    const res = await fetch(`${API_BASE}/api/history`)
+    if (!res.ok) return []
+    const data = await res.json()
+    return data.entries || []
+  } catch {
+    return []
+  }
 }

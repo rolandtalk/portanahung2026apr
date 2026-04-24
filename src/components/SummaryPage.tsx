@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react'
+import React, { useState, useCallback, useEffect } from 'react'
 import { Holding, PortfolioKey } from '../types'
 import { calcStats } from '../App'
 import { loadHistory, HistoryEntry } from '../services/history'
@@ -35,14 +35,18 @@ function RefreshIcon({ spinning }: { spinning: boolean }) {
 export default function SummaryPage({ portfolios, onSelectPortfolio, lastRefreshed, onRefresh }: Props) {
   const [refreshing, setRefreshing] = useState(false)
   const [refreshError, setRefreshError] = useState<string | null>(null)
-  const [history, setHistory] = useState<HistoryEntry[]>(() => loadHistory())
+  const [history, setHistory] = useState<HistoryEntry[]>([])
+
+  useEffect(() => {
+    loadHistory().then(setHistory)
+  }, [])
 
   const handleRefresh = useCallback(async () => {
     setRefreshing(true)
     setRefreshError(null)
     try {
       await onRefresh()
-      setHistory(loadHistory())
+      loadHistory().then(setHistory)
     } catch (err: any) {
       setRefreshError(err.message || 'Failed to fetch quotes')
     } finally {

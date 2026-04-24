@@ -162,6 +162,101 @@ app.get('/api/sheet/:tab', async (req, res) => {
 })
 
 /**
+ * GET /api/history
+ * Reads all snapshot rows from the HISTORY sheet tab (newest first).
+ */
+app.get('/api/history', async (req, res) => {
+  if (!sheetsClient) return res.json({ entries: [] })
+  try {
+    const response = await sheetsClient.spreadsheets.values.get({
+      spreadsheetId: SHEET_ID,
+      range: 'HISTORY!A2:G',
+    })
+    const rows = response.data.values || []
+    const entries = rows
+      .map(row => ({
+        date:    row[0] || '',
+        time:    row[1] || '',
+        summary: parseFloat(row[2]) || 0,
+        CUB:     parseFloat(row[3]) || 0,
+        PSC:     parseFloat(row[4]) || 0,
+        DBS:     parseFloat(row[5]) || 0,
+        FT:      parseFloat(row[6]) || 0,
+      }))
+      .filter(e => e.date)
+      .reverse() // newest first
+    res.json({ entries })
+  } catch {
+    res.json({ entries: [] })
+  }
+})
+
+/**
+ * POST /api/history
+ * Appends or replaces today's snapshot row in the HISTORY sheet tab.
+ * Body: { date, time, summary, CUB, PSC, DBS, FT }
+ */
+app.post('/api/history', async (req, res) => {
+  if (!sheetsClient) return res.status(503).json({ error: 'Sheets not configured' })
+  const { date, time, summary, CUB, PSC, DBS, FT } = req.body
+
+  try {
+    // Ensure HISTORY sheet exists with a header
+    let headerExists = true
+    try {
+      await sheetsClient.spreadsheets.values.get({
+        spreadsheetId: SHEET_ID, range: 'HISTORY!A1',
+      })
+    } catch {
+      headerExists = false
+    }
+    if (!headerExists) {
+      await sheetsClient.spreadsheets.batchUpdate({
+        spreadsheetId: SHEET_ID,
+        requestBody: { requests: [{ addSheet: { properties: { title: 'HISTORY' } } }] },
+      }).catch(() => {}) // sheet may already exist but be empty
+      await sheetsClient.spreadsheets.values.update({
+        spreadsheetId: SHEET_ID,
+        range: 'HISTORY!A1',
+        valueInputOption: 'RAW',
+        requestBody: { values: [['DATE', 'TIME', 'SUMMARY', 'CUB', 'PSC', 'DBS', 'FT']] },
+      })
+    }
+
+    // Find if today already has a row
+    const existing = await sheetsClient.spreadsheets.values.get({
+      spreadsheetId: SHEET_ID, range: 'HISTORY!A2:A',
+    }).catch(() => ({ data: { values: [] } }))
+    const dates = (existing.data.values || []).map(r => r[0])
+    const todayIdx = dates.indexOf(date)
+    const newRow = [date, time, summary, CUB, PSC, DBS, FT]
+
+    if (todayIdx >= 0) {
+      await sheetsClient.spreadsheets.values.update({
+        spreadsheetId: SHEET_ID,
+        range: `HISTORY!A${todayIdx + 2}`,
+        valueInputOption: 'RAW',
+        requestBody: { values: [newRow] },
+      })
+    } else {
+      await sheetsClient.spreadsheets.values.append({
+        spreadsheetId: SHEET_ID,
+        range: 'HISTORY!A2',
+        valueInputOption: 'RAW',
+        insertDataOption: 'INSERT_ROWS',
+        requestBody: { values: [newRow] },
+      })
+    }
+
+    console.log(`History: saved snapshot for ${date}`)
+    res.json({ ok: true })
+  } catch (err) {
+    console.error('History write error:', err.message)
+    res.status(500).json({ error: err.message })
+  }
+})
+
+/**
  * POST /api/sheet/:tab
  * Writes holdings back to the Google Sheet tab (replaces all rows after header).
  * Body: { holdings: [{ symbol, shares, cost }] }
