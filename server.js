@@ -22,21 +22,32 @@ const MARKETDATA_BASE = 'https://api.marketdata.app/v1'
 // Google Sheets write client (service account)
 let sheetsClient = null
 try {
+  let credentials = null
+
+  // Try individual env vars first (GOOGLE_CLIENT_EMAIL + GOOGLE_PRIVATE_KEY)
   const clientEmail = process.env.GOOGLE_CLIENT_EMAIL
   const privateKey  = (process.env.GOOGLE_PRIVATE_KEY || '').replace(/\\n/g, '\n')
   if (clientEmail && privateKey) {
+    credentials = { type: 'service_account', client_email: clientEmail, private_key: privateKey }
+    console.log('Google Sheets: using GOOGLE_CLIENT_EMAIL + GOOGLE_PRIVATE_KEY')
+  }
+
+  // Fallback: decode GOOGLE_SERVICE_ACCOUNT_B64
+  if (!credentials && process.env.GOOGLE_SERVICE_ACCOUNT_B64) {
+    const json = Buffer.from(process.env.GOOGLE_SERVICE_ACCOUNT_B64, 'base64').toString('utf8')
+    credentials = JSON.parse(json)
+    console.log('Google Sheets: using GOOGLE_SERVICE_ACCOUNT_B64')
+  }
+
+  if (credentials) {
     const auth = new google.auth.GoogleAuth({
-      credentials: {
-        type: 'service_account',
-        client_email: clientEmail,
-        private_key: privateKey,
-      },
+      credentials,
       scopes: ['https://www.googleapis.com/auth/spreadsheets'],
     })
     sheetsClient = google.sheets({ version: 'v4', auth })
     console.log('Google Sheets write client: ✓ initialized')
   } else {
-    console.warn('Google Sheets write client: ✗ GOOGLE_CLIENT_EMAIL or GOOGLE_PRIVATE_KEY not set')
+    console.warn('Google Sheets write client: ✗ no credentials found (set GOOGLE_SERVICE_ACCOUNT_B64 or GOOGLE_CLIENT_EMAIL+GOOGLE_PRIVATE_KEY)')
   }
 } catch (err) {
   console.error('Google Sheets write client init failed:', err.message)
