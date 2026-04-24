@@ -249,7 +249,7 @@ export default function App() {
       hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true,
     })
     setLastRefreshed(ts)
-    saveSnapshot({
+    await saveSnapshot({
       summary: calcStats(Object.values(updated).flat()).totalMarketValue,
       CUB: calcStats(updated.CUB).totalMarketValue,
       PSC: calcStats(updated.PSC).totalMarketValue,
