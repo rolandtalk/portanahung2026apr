@@ -3,6 +3,7 @@ import cors from 'cors'
 import { readFileSync } from 'fs'
 import { join, resolve } from 'path'
 import { google } from 'googleapis'
+import cron from 'node-cron'
 
 // Load .env manually (no dotenv dependency needed)
 try {
@@ -382,10 +383,146 @@ app.get('*', (_req, res) => {
   res.sendFile(join(process.cwd(), 'dist', 'index.html'))
 })
 
+// ─── Daily Snapshot Logic ────────────────────────────────────────────────────
+
+const PORTFOLIO_KEYS = ['CUB', 'PSC', 'DBS', 'FT']
+
+/**
+ * Reads holdings from a Google Sheet tab (same CSV logic as GET /api/sheet/:tab).
+ */
+async function fetchHoldingsFromSheet(tab) {
+  const url = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent(tab)}`
+  const res = await fetch(url, {
+    headers: {
+      'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36',
+      'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+    },
+    redirect: 'follow',
+  })
+  if (!res.ok) throw new Error(`Sheet fetch failed for ${tab}: ${res.status}`)
+  const csv = await res.text()
+  const lines = csv.trim().split('\n').filter(Boolean)
+  const holdings = []
+  for (let i = 1; i < lines.length; i++) {
+    const cols = lines[i].split(',').map(c => c.trim().replace(/^"|"$/g, '').trim())
+    const symbol = cols[0]?.toUpperCase()
+    const shares = parseFloat(cols[1])
+    if (symbol && !isNaN(shares)) holdings.push({ symbol, shares })
+  }
+  return holdings
+}
+
+/**
+ * Fetches live prices from marketdata.app for an array of symbols.
+ * Returns { SYMBOL: price } map.
+ */
+async function fetchLivePrices(symbols) {
+  if (!MARKETDATA_TOKEN || symbols.length === 0) return {}
+  const results = await Promise.allSettled(
+    symbols.map(symbol =>
+      fetch(`${MARKETDATA_BASE}/stocks/quotes/${symbol}/`, {
+        headers: { Authorization: `Bearer ${MARKETDATA_TOKEN}`, Accept: 'application/json' },
+      }).then(r => r.json()).then(data => ({ symbol, price: data.s === 'ok' ? data.last?.[0] : null }))
+    )
+  )
+  const prices = {}
+  for (const r of results) {
+    if (r.status === 'fulfilled' && r.value.price != null) {
+      prices[r.value.symbol] = r.value.price
+    }
+  }
+  return prices
+}
+
+/**
+ * Main daily snapshot function — fetches all portfolios, gets live prices,
+ * calculates market values, and writes to the HISTORY sheet.
+ */
+async function runDailySnapshot() {
+  console.log('Daily snapshot: starting…')
+  try {
+    // 1. Load all portfolio holdings from Google Sheets tabs
+    const allHoldings = {}
+    for (const key of PORTFOLIO_KEYS) {
+      allHoldings[key] = await fetchHoldingsFromSheet(key)
+    }
+
+    // 2. Fetch live prices for all unique symbols
+    const allSymbols = [...new Set(Object.values(allHoldings).flat().map(h => h.symbol))]
+    const prices = await fetchLivePrices(allSymbols)
+
+    // 3. Calculate market values
+    const mv = {}
+    let total = 0
+    for (const key of PORTFOLIO_KEYS) {
+      mv[key] = Math.round(allHoldings[key].reduce((sum, h) => sum + h.shares * (prices[h.symbol] || 0), 0))
+      total += mv[key]
+    }
+
+    // 4. Build date/time strings in Taiwan timezone
+    const now = new Date()
+    const dateStr = now.toLocaleDateString('sv-SE', { timeZone: 'Asia/Taipei' }) // "2026-04-25"
+    const timeStr = now.toLocaleString('en-US', { timeZone: 'Asia/Taipei', hour: '2-digit', minute: '2-digit', hour12: true })
+
+    // 5. Save to HISTORY sheet (reuse existing upsert logic)
+    if (!sheetsClient) throw new Error('Sheets client not ready')
+
+    // Ensure header exists
+    try { await sheetsClient.spreadsheets.values.get({ spreadsheetId: SHEET_ID, range: 'HISTORY!A1' }) }
+    catch {
+      await sheetsClient.spreadsheets.values.update({
+        spreadsheetId: SHEET_ID, range: 'HISTORY!A1', valueInputOption: 'RAW',
+        requestBody: { values: [['DATE', 'TIME', 'SUMMARY', 'CUB', 'PSC', 'DBS', 'FT']] },
+      })
+    }
+
+    // Find/replace today's row
+    const existing = await sheetsClient.spreadsheets.values.get({
+      spreadsheetId: SHEET_ID, range: 'HISTORY!A2:A',
+    }).catch(() => ({ data: { values: [] } }))
+    const dates = (existing.data.values || []).map(r => r[0])
+    const todayIdx = dates.indexOf(dateStr)
+    const newRow = [dateStr, timeStr, total, mv.CUB, mv.PSC, mv.DBS, mv.FT]
+
+    if (todayIdx >= 0) {
+      await sheetsClient.spreadsheets.values.update({
+        spreadsheetId: SHEET_ID, range: `HISTORY!A${todayIdx + 2}`,
+        valueInputOption: 'RAW', requestBody: { values: [newRow] },
+      })
+    } else {
+      await sheetsClient.spreadsheets.values.append({
+        spreadsheetId: SHEET_ID, range: 'HISTORY!A2',
+        valueInputOption: 'RAW', insertDataOption: 'INSERT_ROWS',
+        requestBody: { values: [newRow] },
+      })
+    }
+
+    console.log(`Daily snapshot: ✓ saved for ${dateStr} ${timeStr} — Total: $${total.toLocaleString()} (CUB:${mv.CUB} PSC:${mv.PSC} DBS:${mv.DBS} FT:${mv.FT})`)
+  } catch (err) {
+    console.error('Daily snapshot failed:', err.message)
+  }
+}
+
+/**
+ * POST /api/snapshot/run
+ * Manual trigger for the daily snapshot (for testing).
+ */
+app.post('/api/snapshot/run', async (_req, res) => {
+  try {
+    await runDailySnapshot()
+    res.json({ ok: true })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// Schedule: 6:00 AM Taiwan time (Asia/Taipei), Monday–Friday
+cron.schedule('0 6 * * 1-5', runDailySnapshot, { timezone: 'Asia/Taipei' })
+console.log('Daily snapshot cron: scheduled at 06:00 Asia/Taipei, Mon–Fri')
+
 app.listen(PORT, () => {
   console.log(`App running at http://localhost:${PORT}`)
   console.log(`Using marketdata.app token: ${MARKETDATA_TOKEN ? '✓ loaded' : '✗ MISSING'}`)
-  // Debug: list all env var names available at runtime
   const keys = Object.keys(process.env).sort()
   console.log(`ENV KEYS (${keys.length} total):`, keys.join(', '))
 })
