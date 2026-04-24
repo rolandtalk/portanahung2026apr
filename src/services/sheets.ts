@@ -1,6 +1,6 @@
 import { Holding, PortfolioKey } from '../types'
 
-const API_BASE = (import.meta.env.VITE_API_URL as string) || ''
+const API_BASE = import.meta.env.DEV ? '' : 'https://portanahung2026apr-production.up.railway.app'
 
 export async function loadPortfolioFromSheet(tab: PortfolioKey): Promise<Holding[] | null> {
   try {

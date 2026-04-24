@@ -6,7 +6,7 @@ export interface QuoteResult {
   error?: boolean
 }
 
-const API_BASE = (import.meta.env.VITE_API_URL as string) || ''
+const API_BASE = import.meta.env.DEV ? '' : 'https://portanahung2026apr-production.up.railway.app'
 
 export async function fetchQuotes(symbols: string[]): Promise<Record<string, QuoteResult>> {
   if (symbols.length === 0) return {}
