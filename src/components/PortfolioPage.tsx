@@ -24,7 +24,7 @@ function SortIcon() {
   return <span className="inline-block ml-1 text-[#8b949e] text-[10px] leading-none">⇅</span>
 }
 
-type SortKey = 'symbol' | 'dayChg' | 'mktVal' | 'gl' | 'glPct' | 'none'
+type SortKey = 'symbol' | 'priceChgPct' | 'dayChg' | 'mktVal' | 'gl' | 'glPct' | 'none'
 type SortDir = 'asc' | 'desc'
 
 export default function PortfolioPage({ portfolioKey, holdings, onUpdateHoldings, onSave, lastRefreshed, onRefreshed }: Props) {
@@ -86,6 +86,7 @@ export default function PortfolioPage({ portfolioKey, holdings, onUpdateHoldings
       av = (a.price - prevA) * a.shares
       bv = (b.price - prevB) * b.shares
     }
+    if (sortKey === 'priceChgPct') { av = a.dayChange; bv = b.dayChange }
     if (sortKey === 'mktVal') { av = a.shares * a.price; bv = b.shares * b.price }
     if (sortKey === 'gl') { av = a.shares * (a.price - a.cost); bv = b.shares * (b.price - b.cost) }
     if (sortKey === 'glPct') {
@@ -165,7 +166,7 @@ export default function PortfolioPage({ portfolioKey, holdings, onUpdateHoldings
       {/* Holdings Table */}
       <div className="bg-[#161b22] border border-[#30363d] rounded-lg overflow-hidden">
         {/* Table Header Bar */}
-        <div className="flex items-center justify-between px-4 py-3 border-b border-[#30363d]">
+        <div className="flex items-center justify-between px-2 py-3 border-b border-[#30363d]">
           <h2 className="text-base font-semibold text-white">Holdings</h2>
           <div className="flex items-center gap-2">
             <input
@@ -209,43 +210,49 @@ export default function PortfolioPage({ portfolioKey, holdings, onUpdateHoldings
 
         {/* Table */}
         <div className="overflow-x-auto">
-          <table className="w-full text-sm">
+          <table className="w-full text-xs md:text-sm">
             <thead>
-              <tr className="border-b border-[#30363d] text-[#8b949e] text-xs uppercase tracking-wide">
+              <tr className="border-b border-[#30363d] text-[#8b949e] text-[10px] md:text-xs uppercase tracking-normal">
                 <th
-                  className="text-left px-4 py-3 cursor-pointer hover:text-white select-none whitespace-nowrap"
+                  className="text-left px-1 py-2 cursor-pointer hover:text-white select-none whitespace-nowrap"
                   onClick={() => handleSort('symbol')}
                 >
                   Smbl <SortIcon />
                 </th>
-                <th className="text-right px-4 py-3">Shares</th>
-                <th className="text-right px-4 py-3">Cost</th>
-                <th className="text-right px-4 py-3">Price</th>
+                <th className="text-right px-1 py-2">Shares</th>
+                <th className="text-right px-1 py-2">Cost</th>
+                <th className="text-right px-1 py-2">Price</th>
                 <th
-                  className="text-right px-4 py-3 cursor-pointer hover:text-white select-none whitespace-nowrap"
+                  className="text-right px-1 py-2 cursor-pointer hover:text-white select-none whitespace-nowrap"
                   onClick={() => handleSort('dayChg')}
                 >
                   Day Chg <SortIcon />
                 </th>
                 <th
-                  className="text-right px-4 py-3 cursor-pointer hover:text-white select-none whitespace-nowrap"
+                  className="text-right px-1 py-2 cursor-pointer hover:text-white select-none whitespace-nowrap"
+                  onClick={() => handleSort('priceChgPct')}
+                >
+                  % <SortIcon />
+                </th>
+                <th
+                  className="text-right px-1 py-2 cursor-pointer hover:text-white select-none whitespace-nowrap"
                   onClick={() => handleSort('mktVal')}
                 >
                   Mkt Val <SortIcon />
                 </th>
                 <th
-                  className="text-right px-4 py-3 cursor-pointer hover:text-white select-none whitespace-nowrap"
+                  className="text-right px-1 py-2 cursor-pointer hover:text-white select-none whitespace-nowrap"
                   onClick={() => handleSort('gl')}
                 >
                   G/L <SortIcon />
                 </th>
                 <th
-                  className="text-right px-4 py-3 cursor-pointer hover:text-white select-none whitespace-nowrap"
+                  className="text-right px-1 py-2 cursor-pointer hover:text-white select-none whitespace-nowrap"
                   onClick={() => handleSort('glPct')}
                 >
                   G/L% <SortIcon />
                 </th>
-                <th className="text-right px-4 py-3">Action</th>
+                <th className="text-right px-1 py-2">Action</th>
               </tr>
             </thead>
             <tbody>
@@ -266,58 +273,58 @@ export default function PortfolioPage({ portfolioKey, holdings, onUpdateHoldings
                     }`}
                   >
                     {/* Symbol */}
-                    <td className="px-4 py-3 font-semibold text-white">{h.symbol}</td>
+                    <td className="px-1 py-2 font-semibold text-white">{h.symbol}</td>
 
                     {/* Shares - editable */}
-                    <td className="px-4 py-3 text-right">
+                    <td className="px-1 py-2 text-right">
                       <input
                         type="number"
                         value={h.shares || ''}
                         onChange={e => updateField(h.symbol, 'shares', parseFloat(e.target.value) || 0)}
-                        className="bg-[#21262d] border border-[#30363d] rounded px-2 py-1 text-right text-white w-24 focus:outline-none focus:border-blue-500 text-sm"
+                        className="bg-[#21262d] border border-[#30363d] rounded px-1 py-0.5 text-right text-white w-16 focus:outline-none focus:border-blue-500 text-xs md:text-sm"
                       />
                     </td>
 
                     {/* Cost - editable */}
-                    <td className="px-4 py-3 text-right">
+                    <td className="px-1 py-2 text-right">
                       <input
                         type="number"
                         value={h.cost || ''}
                         onChange={e => updateField(h.symbol, 'cost', parseFloat(e.target.value) || 0)}
-                        className="bg-[#21262d] border border-[#30363d] rounded px-2 py-1 text-right text-white w-24 focus:outline-none focus:border-blue-500 text-sm"
+                        className="bg-[#21262d] border border-[#30363d] rounded px-1 py-0.5 text-right text-white w-16 focus:outline-none focus:border-blue-500 text-xs md:text-sm"
                       />
                     </td>
 
                     {/* Price */}
-                    <td className="px-4 py-3 text-right">
-                      <div className="text-white font-medium">{fmtPrice(h.price)}</div>
-                      <div className={`text-xs ${dcPos ? 'text-green-400' : 'text-red-400'}`}>
-                        {dcPos ? '+' : ''}{h.dayChange.toFixed(2)}%
-                      </div>
-                    </td>
+                    <td className="px-1 py-2 text-right text-white font-medium">{fmtPrice(h.price)}</td>
 
                     {/* Day Change $ */}
-                    <td className={`px-4 py-3 text-right font-medium ${dcPos ? 'text-green-400' : 'text-red-400'}`}>
+                    <td className={`px-1 py-2 text-right font-medium ${dcPos ? 'text-green-400' : 'text-red-400'}`}>
                       {dcPos ? '+' : '-'}{fmt(dayChangeDollar)}
                     </td>
 
+                    {/* Price Change % */}
+                    <td className={`px-1 py-2 text-right font-medium ${dcPos ? 'text-green-400' : 'text-red-400'}`}>
+                      {dcPos ? '+' : ''}{h.dayChange.toFixed(2)}%
+                    </td>
+
                     {/* Market Value */}
-                    <td className="px-4 py-3 text-right text-white font-medium">
+                    <td className="px-1 py-2 text-right text-white font-medium">
                       {fmt(mktVal)}
                     </td>
 
                     {/* G/L */}
-                    <td className={`px-4 py-3 text-right font-medium ${glPos ? 'text-green-400' : 'text-red-400'}`}>
+                    <td className={`px-1 py-2 text-right font-medium ${glPos ? 'text-green-400' : 'text-red-400'}`}>
                       {glPos ? '+' : '-'}{fmt(gl)}
                     </td>
 
                     {/* G/L % */}
-                    <td className={`px-4 py-3 text-right font-medium ${glPos ? 'text-green-400' : 'text-red-400'}`}>
+                    <td className={`px-1 py-2 text-right font-medium ${glPos ? 'text-green-400' : 'text-red-400'}`}>
                       {glPos ? '+' : ''}{glPct.toFixed(2)}%
                     </td>
 
                     {/* Action */}
-                    <td className="px-4 py-3 text-right">
+                    <td className="px-1 py-2 text-right">
                       <button
                         onClick={() => removeHolding(h.symbol)}
                         className="bg-red-700 hover:bg-red-600 text-white w-7 h-7 rounded flex items-center justify-center ml-auto transition-colors"
@@ -333,7 +340,7 @@ export default function PortfolioPage({ portfolioKey, holdings, onUpdateHoldings
               })}
               {holdings.length === 0 && (
                 <tr>
-                  <td colSpan={9} className="px-4 py-8 text-center text-[#8b949e]">
+                  <td colSpan={10} className="px-4 py-8 text-center text-[#8b949e]">
                     No holdings yet. Add a symbol above.
                   </td>
                 </tr>
