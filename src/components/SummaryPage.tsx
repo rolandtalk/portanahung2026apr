@@ -89,7 +89,7 @@ export default function SummaryPage({ portfolios, onSelectPortfolio, lastRefresh
           </span>
         </div>
         <p className="text-xs text-[#8b949e] mt-1">
-          Prices shown are Close prices from YFinance&nbsp;&nbsp;
+          Prices shown are close prices from Marketdata.app&nbsp;&nbsp;
           <span className="text-[#6b7280]">(as of {timeShort})</span>
         </p>
 
@@ -101,22 +101,25 @@ export default function SummaryPage({ portfolios, onSelectPortfolio, lastRefresh
         )}
       </div>
 
-      {/* ── Overall Stats ── */}
-      <div className="grid grid-cols-3 gap-4">
-        <div className="bg-[#161b22] border border-[#30363d] rounded-lg p-4">
-          <p className="text-xs text-[#8b949e] mb-1">Total Market Value</p>
-          <p className="text-2xl font-bold text-white">{fmt(totalStats.totalMarketValue)}</p>
+      {/* ── Overall Stats (All Portfolios) ── */}
+      <div className="grid grid-cols-12 gap-4">
+        <div className="col-span-7 grid grid-cols-1 gap-4">
+          <div className="bg-[#161b22] border border-[#30363d] rounded-lg p-4">
+            <p className="text-xs text-[#8b949e] mb-1 uppercase tracking-wide">Total Market Value</p>
+            <p className="text-2xl font-bold text-white whitespace-nowrap">{fmt(totalStats.totalMarketValue)}</p>
+          </div>
+          <div className="bg-[#161b22] border border-[#30363d] rounded-lg p-4">
+            <p className="text-xs text-[#8b949e] mb-1 uppercase tracking-wide">Total Cost Basis</p>
+            <p className="text-2xl font-bold text-white whitespace-nowrap">{fmt(totalStats.totalCostBasis)}</p>
+          </div>
         </div>
-        <div className="bg-[#161b22] border border-[#30363d] rounded-lg p-4">
-          <p className="text-xs text-[#8b949e] mb-1">Total Cost Basis</p>
-          <p className="text-2xl font-bold text-white">{fmt(totalStats.totalCostBasis)}</p>
-        </div>
-        <div className="bg-[#161b22] border border-[#30363d] rounded-lg p-4">
-          <p className="text-xs text-[#8b949e] mb-1">Total Gain/Loss</p>
-          <p className={`text-2xl font-bold ${glPos ? 'text-green-400' : 'text-red-400'}`}>
+
+        <div className="col-span-5 bg-[#161b22] border border-[#30363d] rounded-lg p-4 min-h-full flex flex-col justify-center">
+          <p className="text-xs text-[#8b949e] mb-2 uppercase tracking-wide">Total Gain/Loss</p>
+          <p className={`text-4xl font-bold whitespace-nowrap ${glPos ? 'text-green-400' : 'text-red-400'}`}>
             {glPos ? '+' : '-'}{fmt(totalStats.totalGainLoss)}
           </p>
-          <p className={`text-sm mt-0.5 ${glPos ? 'text-green-400' : 'text-red-400'}`}>
+          <p className={`text-base mt-1 ${glPos ? 'text-green-400' : 'text-red-400'}`}>
             {glPos ? '+' : ''}{totalStats.totalGainLossPct.toFixed(2)}%
           </p>
         </div>
