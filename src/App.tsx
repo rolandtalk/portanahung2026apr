@@ -155,32 +155,45 @@ export default function App() {
     hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true
   }))
 
-  const syncFromSheet = useCallback((showStatus = true) => {
+  const syncFromSheet = useCallback(async (showStatus = true) => {
     const cached = loadPortfolios()
-    return loadAllPortfoliosFromSheet(PORTFOLIO_KEYS).then(sheetData => {
-      const merged = { ...cached }
-      let updated = 0
+    const sheetData = await loadAllPortfoliosFromSheet(PORTFOLIO_KEYS)
+    const merged = { ...cached }
+    let updated = 0
+
+    for (const key of PORTFOLIO_KEYS) {
+      const sheetHoldings = sheetData[key]
+      if (!sheetHoldings || sheetHoldings.length === 0) continue
+      merged[key] = sheetHoldings
+      updated++
+    }
+
+    if (updated > 0) {
+      const allSymbols = PORTFOLIO_KEYS.flatMap(key => merged[key].map(h => h.symbol))
+      const uniqueSymbols = [...new Set(allSymbols)]
+      const quotes = await fetchQuotes(uniqueSymbols)
+
       for (const key of PORTFOLIO_KEYS) {
-        const sheetHoldings = sheetData[key]
-        if (!sheetHoldings || sheetHoldings.length === 0) continue
-        const cachedMap: Record<string, Holding> = {}
-        for (const h of (cached[key] || [])) cachedMap[h.symbol] = h
-        merged[key] = sheetHoldings.map(sh => ({
-          ...sh,
-          price: cachedMap[sh.symbol]?.price ?? sh.price,
-          dayChange: cachedMap[sh.symbol]?.dayChange ?? sh.dayChange,
-        }))
-        updated++
+        merged[key] = merged[key].map(h => {
+          const q = quotes[h.symbol]
+          if (!q || q.error || q.price === null) return h
+          return { ...h, price: q.price, dayChange: q.dayChangePct ?? h.dayChange }
+        })
       }
-      if (updated > 0) {
-        setPortfolios(merged)
-        savePortfolios(merged)
-        if (showStatus) setSheetStatus('Synced from Google Sheets')
-      } else {
-        if (showStatus) setSheetStatus('Using cached data')
-      }
-      return merged
-    })
+
+      setPortfolios(merged)
+      savePortfolios(merged)
+      const ts = new Date().toLocaleString('en-US', {
+        month: 'short', day: '2-digit', year: 'numeric',
+        hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true,
+      })
+      setLastRefreshed(ts)
+      if (showStatus) setSheetStatus('Synced from Google Sheets + Marketdata.app')
+    } else if (showStatus) {
+      setSheetStatus('Using cached data')
+    }
+
+    return merged
   }, [])
 
   // On startup: load from Google Sheets
