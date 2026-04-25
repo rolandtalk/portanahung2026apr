@@ -8,9 +8,10 @@
     "server": "node server.js",
     "dev:all": "concurrently \"npm run server\" \"npm run dev\"",
     "build": "vite build",
+    "build:cf": "CLOUDFLARE_VITE_PLUGIN=1 vite build",
     "start": "npm run build && node server.js",
-    "preview": "npm run build && wrangler dev",
-    "deploy": "npm run build && wrangler deploy"
+    "preview": "npm run build:cf && wrangler dev",
+    "deploy": "npm run build:cf && wrangler deploy"
   },
   "dependencies": {
     "cors": "^2.8.5",
