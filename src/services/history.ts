@@ -8,7 +8,7 @@ export interface HistoryEntry {
   FT: number
 }
 
-const API_BASE = import.meta.env.DEV ? '' : 'https://portanahung2026apr-production.up.railway.app'
+import { API_BASE } from './apiBase'
 
 export async function saveSnapshot(values: Omit<HistoryEntry, 'date' | 'time'>): Promise<void> {
   const now = new Date()
