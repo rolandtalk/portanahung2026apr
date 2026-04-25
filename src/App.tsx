@@ -202,9 +202,9 @@ export default function App() {
     syncFromSheet(true).then(() => {
       setSheetLoading(false)
       setTimeout(() => setSheetStatus(null), 4000)
-    }).catch(() => {
+    }).catch((err: any) => {
       setSheetLoading(false)
-      setSheetStatus('Could not reach Google Sheets — using cache')
+      setSheetStatus(err?.message || 'Sync failed')
       setTimeout(() => setSheetStatus(null), 5000)
     })
   }, [])
@@ -212,7 +212,10 @@ export default function App() {
   // Re-sync from Sheet when window regains focus (cross-device sync)
   useEffect(() => {
     const onFocus = () => {
-      syncFromSheet(false).catch(() => {})
+      syncFromSheet(false).catch((err: any) => {
+        setSheetStatus(err?.message || 'Sync failed')
+        setTimeout(() => setSheetStatus(null), 5000)
+      })
     }
     window.addEventListener('focus', onFocus)
     return () => window.removeEventListener('focus', onFocus)
