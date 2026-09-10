@@ -286,30 +286,34 @@ export default function App() {
       )}
       <div className="max-w-6xl mx-auto px-4 py-4">
         {/* Top Nav */}
-        <div className="flex flex-wrap items-center gap-2 mb-6">
-          <button
-            onClick={() => setView('summary')}
-            className={`flex items-center gap-1 px-4 py-2 rounded text-sm font-medium border transition-colors ${
-              view === 'summary'
-                ? 'bg-[#1f2937] border-[#374151] text-white'
-                : 'bg-transparent border-[#374151] text-[#8b949e] hover:text-white hover:border-[#6b7280]'
-            }`}
-          >
-            ← Summary
-          </button>
-          {PORTFOLIO_KEYS.map(key => (
+        <div className="mb-6 flex flex-wrap items-start gap-2">
+          <div className="flex w-full min-w-0 items-center gap-1.5 sm:w-auto sm:gap-2">
             <button
-              key={key}
-              onClick={() => setView(key)}
-              className={`px-5 py-2 rounded text-sm font-medium transition-colors ${
-                view === key
-                  ? 'bg-blue-600 text-white'
-                  : 'bg-transparent border border-[#374151] text-[#8b949e] hover:text-white hover:border-[#6b7280]'
+              onClick={() => setView('summary')}
+              className={`flex shrink-0 items-center gap-1 whitespace-nowrap px-2.5 py-2 text-sm font-medium border rounded transition-colors sm:px-4 ${
+                view === 'summary'
+                  ? 'bg-[#1f2937] border-[#374151] text-white'
+                  : 'bg-transparent border-[#374151] text-[#8b949e] hover:text-white hover:border-[#6b7280]'
               }`}
             >
-              {key}
+              ← Summary
             </button>
-          ))}
+            <div className="flex min-w-0 flex-1 gap-1.5 sm:flex-none sm:gap-2">
+              {PORTFOLIO_KEYS.map(key => (
+                <button
+                  key={key}
+                  onClick={() => setView(key)}
+                  className={`min-w-0 flex-1 px-1 py-2 text-sm font-medium rounded transition-colors sm:flex-none sm:px-5 ${
+                    view === key
+                      ? 'bg-blue-600 text-white'
+                      : 'bg-transparent border border-[#374151] text-[#8b949e] hover:text-white hover:border-[#6b7280]'
+                  }`}
+                >
+                  {key}
+                </button>
+              ))}
+            </div>
+          </div>
           <div className="relative ml-auto">
             <button
               type="button"
