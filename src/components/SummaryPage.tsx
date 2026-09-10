@@ -2,6 +2,7 @@ import React, { useState, useCallback, useEffect } from 'react'
 import { Holding, PortfolioKey } from '../types'
 import { calcStats } from '../App'
 import { loadHistory, HistoryEntry } from '../services/history'
+import ProductionDomainRemark from './ProductionDomainRemark'
 
 const PORTFOLIO_KEYS: PortfolioKey[] = ['CUB', 'PSC', 'DBS', 'FT']
 
@@ -80,6 +81,7 @@ export default function SummaryPage({ portfolios, onSelectPortfolio, lastRefresh
             <RefreshIcon spinning={refreshing} />
             {refreshing ? 'Refreshing…' : 'Refresh'}
           </button>
+          <ProductionDomainRemark />
         </div>
 
         <div className="flex items-baseline gap-3 flex-wrap">

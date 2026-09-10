@@ -2,6 +2,7 @@ import React, { useState, useCallback } from 'react'
 import { Holding, PortfolioKey } from '../types'
 import { calcStats } from '../App'
 import { fetchQuotes } from '../services/quotes'
+import ProductionDomainRemark from './ProductionDomainRemark'
 
 interface Props {
   portfolioKey: PortfolioKey
@@ -197,6 +198,7 @@ export default function PortfolioPage({ portfolioKey, holdings, onUpdateHoldings
               </svg>
               {refreshing ? 'Refreshing…' : 'Refresh & Save'}
             </button>
+            <ProductionDomainRemark />
           </div>
         </div>
 

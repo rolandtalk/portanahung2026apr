@@ -5,7 +5,6 @@ import PortfolioPage from './components/PortfolioPage'
 import { loadAllPortfoliosFromSheet, writePortfolioToSheet } from './services/sheets'
 import { fetchQuotes } from './services/quotes'
 import { saveSnapshot } from './services/history'
-import { API_BASE } from './services/apiBase'
 
 const PORTFOLIO_KEYS: PortfolioKey[] = ['CUB', 'PSC', 'DBS', 'FT']
 
@@ -151,7 +150,6 @@ export default function App() {
   const [view, setView] = useState<View>('summary')
   const [sheetLoading, setSheetLoading] = useState(true)
   const [sheetStatus, setSheetStatus] = useState<string | null>(null)
-  const [showProductionDomain, setShowProductionDomain] = useState(false)
   const [lastRefreshed, setLastRefreshed] = useState(() => new Date().toLocaleString('en-US', {
     month: 'short', day: '2-digit', year: 'numeric',
     hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true
@@ -286,7 +284,7 @@ export default function App() {
       )}
       <div className="max-w-6xl mx-auto px-4 py-4">
         {/* Top Nav */}
-        <div className="mb-6 flex flex-wrap items-start gap-2">
+        <div className="mb-6">
           <div className="flex w-full min-w-0 items-center gap-1.5 sm:w-auto sm:gap-2">
             <button
               onClick={() => setView('summary')}
@@ -313,54 +311,6 @@ export default function App() {
                 </button>
               ))}
             </div>
-          </div>
-          <div className="relative ml-auto">
-            <button
-              type="button"
-              onClick={() => setShowProductionDomain(open => !open)}
-              aria-label="Show production public domain"
-              aria-expanded={showProductionDomain}
-              aria-controls="production-domain-remark"
-              title="Production public domain"
-              className={`flex h-10 w-10 items-center justify-center rounded border transition-colors ${
-                showProductionDomain
-                  ? 'border-blue-500 bg-blue-600/20 text-blue-300'
-                  : 'border-[#374151] bg-transparent text-[#8b949e] hover:border-[#6b7280] hover:text-white'
-              }`}
-            >
-              <svg
-                aria-hidden="true"
-                viewBox="0 0 24 24"
-                className="h-5 w-5"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="1.8"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              >
-                <rect x="3.5" y="3.5" width="17" height="17" rx="2" />
-                <path d="M7.5 8h9M7.5 12h9M7.5 16h9" />
-              </svg>
-            </button>
-            {showProductionDomain && (
-              <div
-                id="production-domain-remark"
-                role="note"
-                className="absolute right-0 top-full z-20 mt-2 w-72 max-w-[calc(100vw-2rem)] rounded-lg border border-[#30363d] bg-[#161b22] p-3 shadow-xl"
-              >
-                <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-[#8b949e]">
-                  Production public domain
-                </div>
-                <a
-                  href={API_BASE}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="block break-all text-sm text-blue-400 hover:text-blue-300"
-                >
-                  {API_BASE}
-                </a>
-              </div>
-            )}
           </div>
         </div>
 
