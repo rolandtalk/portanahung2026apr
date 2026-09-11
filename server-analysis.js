@@ -78,6 +78,49 @@ export function normalizeCompletedCandles(raw, now = new Date()) {
   return candles
 }
 
+export function normalizeRegularSessionQuotes(raw) {
+  const symbols = Array.isArray(raw?.symbol) ? raw.symbol : []
+  const quotes = {}
+
+  for (let index = 0; index < symbols.length; index++) {
+    const symbol = String(symbols[index] || '').trim().toUpperCase()
+    const priceValue = raw?.last?.[index]
+    const changeValue = raw?.change?.[index]
+    const updatedValue = raw?.updated?.[index]
+    const price = Number(priceValue)
+    const change = Number(changeValue)
+    const updated = Number(updatedValue)
+    if (
+      !symbol ||
+      priceValue == null ||
+      changeValue == null ||
+      updatedValue == null ||
+      !Number.isFinite(price) ||
+      !Number.isFinite(change) ||
+      !Number.isFinite(updated)
+    ) continue
+
+    const previousClose = price - change
+    const rawPct = raw?.changepct?.[index]
+    const pct = rawPct != null && Number.isFinite(Number(rawPct))
+      ? Number(rawPct) * 100
+      : previousClose !== 0
+        ? (change / previousClose) * 100
+        : null
+
+    quotes[symbol] = {
+      symbol,
+      price,
+      change,
+      pct,
+      updated,
+      sessionDate: easternDateKey(new Date(updated * 1000)),
+    }
+  }
+
+  return quotes
+}
+
 export function calculateHoldingGrowth(holding, candles, canonicalCandles = candles) {
   const candleByDate = new Map(candles.map(candle => [candle.date, candle]))
   const latestIndex = canonicalCandles.length - 1
@@ -134,5 +177,123 @@ export function calculateGrowthAggregate(holdings) {
     marketValueIncludedSymbols: holdingsWithValue.length,
     marketValueMissingSymbols: holdings.length - holdingsWithValue.length,
     growth,
+  }
+}
+
+export function applyRegularSessionQuotes(payload, quotes, canonicalSessionDate, quoteRetrievedAt) {
+  const baseOneDay = payload.aggregate?.growth?.[1] || payload.aggregate?.growth?.['1']
+  const fallback = {
+    ...payload,
+    oneDay: {
+      source: 'completed-closes',
+      asOf: payload.asOf,
+      baselineDate: payload.baselineDates?.[1] || payload.baselineDates?.['1'] || null,
+      includedSymbols: baseOneDay?.includedSymbols ?? 0,
+      missingSymbols: baseOneDay?.missingSymbols ?? payload.holdings.length,
+    },
+    quoteErrors: [],
+    quoteRetrievedAt: quoteRetrievedAt || null,
+  }
+
+  // If the quote service is behind the candle history, completed candles are
+  // more recent and already provide the correct closed-session 1D comparison.
+  if (!canonicalSessionDate || (payload.asOf && canonicalSessionDate < payload.asOf)) {
+    return fallback
+  }
+
+  const quoteErrors = []
+  const holdings = payload.holdings.map(holding => {
+    const quote = quotes[holding.symbol]
+    if (!quote || quote.sessionDate !== canonicalSessionDate || !Number.isFinite(quote.pct)) {
+      quoteErrors.push({
+        symbol: holding.symbol,
+        message: quote
+          ? quote.sessionDate !== canonicalSessionDate
+            ? `Quote belongs to ${quote.sessionDate}, not ${canonicalSessionDate}`
+            : 'Quote change unavailable'
+          : 'Regular-session quote unavailable',
+      })
+
+      // Outside regular trading hours, the completed candle and quote refer to
+      // the same session. Preserve that candle rather than discarding valid
+      // close-to-close data just because this symbol's quote is unavailable.
+      if (canonicalSessionDate === payload.asOf && holding.asOf === payload.asOf) {
+        return holding
+      }
+
+      return {
+        ...holding,
+        asOf: null,
+        lastClose: null,
+        marketValue: null,
+        growth: { ...holding.growth, 1: null },
+      }
+    }
+
+    const baselineDate = canonicalSessionDate > payload.asOf
+      ? payload.asOf
+      : holding.growth?.[1]?.baselineDate || payload.baselineDates?.[1] || null
+    const baselineClose = quote.price - quote.change
+    return {
+      ...holding,
+      asOf: canonicalSessionDate,
+      lastClose: quote.price,
+      marketValue: holding.shares * quote.price,
+      growth: {
+        ...holding.growth,
+        1: {
+          baselineDate,
+          baselineClose,
+          pct: quote.pct,
+          valueChange: holding.shares * quote.change,
+        },
+      },
+    }
+  })
+
+  const valued = holdings.filter(holding => Number.isFinite(holding.marketValue))
+  const includedOneDay = holdings.filter(holding => holding.growth?.[1])
+  const marketValue = valued.reduce((sum, holding) => sum + holding.marketValue, 0)
+  const oneDayCurrentValue = includedOneDay.reduce(
+    (sum, holding) => sum + holding.marketValue,
+    0
+  )
+  const oneDayBaselineValue = includedOneDay.reduce(
+    (sum, holding) => sum + holding.shares * holding.growth[1].baselineClose,
+    0
+  )
+  const oneDayValueChange = oneDayCurrentValue - oneDayBaselineValue
+
+  return {
+    ...payload,
+    holdings,
+    aggregate: {
+      ...payload.aggregate,
+      marketValue,
+      marketValueIncludedSymbols: valued.length,
+      marketValueMissingSymbols: holdings.length - valued.length,
+      growth: {
+        ...payload.aggregate.growth,
+        1: {
+          pct: oneDayBaselineValue !== 0
+            ? (oneDayValueChange / oneDayBaselineValue) * 100
+            : null,
+          valueChange: oneDayValueChange,
+          includedSymbols: includedOneDay.length,
+          missingSymbols: holdings.length - includedOneDay.length,
+        },
+      },
+    },
+    oneDay: {
+      source: 'regular-session-quote',
+      asOf: canonicalSessionDate,
+      baselineDate: canonicalSessionDate > payload.asOf
+        ? payload.asOf
+        : payload.baselineDates?.[1] || null,
+      includedSymbols: includedOneDay.length,
+      missingSymbols: holdings.length - includedOneDay.length,
+    },
+    quoteErrors,
+    quoteRetrievedAt: quoteRetrievedAt || null,
   }
 }

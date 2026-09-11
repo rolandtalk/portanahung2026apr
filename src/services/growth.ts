@@ -4,7 +4,7 @@ export const GROWTH_PERIODS = [1, 3, 10, 20, 60] as const
 export type GrowthPeriod = typeof GROWTH_PERIODS[number]
 
 export interface GrowthMetric {
-  baselineDate: string
+  baselineDate: string | null
   baselineClose: number
   pct: number
   valueChange: number
@@ -39,6 +39,16 @@ export interface HoldingsGrowthResponse {
     growth: Record<string, AggregateGrowthMetric>
   }
   errors: Array<{ symbol: string; message: string }>
+  quoteErrors?: Array<{ symbol: string; message: string }>
+  quoteError?: string | null
+  quoteRetrievedAt?: string | null
+  oneDay?: {
+    source: 'regular-session-quote' | 'completed-closes'
+    asOf: string | null
+    baselineDate: string | null
+    includedSymbols: number
+    missingSymbols: number
+  }
   retrievedAt: string
   cached: boolean
 }

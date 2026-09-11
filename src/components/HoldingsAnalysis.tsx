@@ -11,6 +11,10 @@ type DisplayMode = 'percent' | 'value'
 type SortColumn = 'symbol' | 'marketValue' | GrowthPeriod
 type SortDirection = 'asc' | 'desc'
 
+interface Props {
+  refreshKey: string
+}
+
 function fmtShares(value: number) {
   return value.toLocaleString('en-US', { maximumFractionDigits: 4 })
 }
@@ -40,7 +44,7 @@ function SortIcon({ active, direction }: { active: boolean; direction: SortDirec
   )
 }
 
-export default function HoldingsAnalysis() {
+export default function HoldingsAnalysis({ refreshKey }: Props) {
   const [mode, setMode] = useState<DisplayMode>('percent')
   const [sortColumn, setSortColumn] = useState<SortColumn>('marketValue')
   const [sortDirection, setSortDirection] = useState<SortDirection>('desc')
@@ -62,7 +66,7 @@ export default function HoldingsAnalysis() {
 
   useEffect(() => {
     load()
-  }, [load])
+  }, [load, refreshKey])
 
   const handleSort = (column: SortColumn) => {
     if (sortColumn === column) {
@@ -117,7 +121,7 @@ export default function HoldingsAnalysis() {
           <h3 className="text-sm font-semibold text-white">All Holdings Analysis</h3>
           <p className="mt-0.5 text-xs text-[#8b949e]">
             Shares combined across CUB, PSC, DBS and FT
-            {data?.asOf ? ` · close prices through ${data.asOf}` : ''}
+            {data?.asOf ? ` · longer-period closes through ${data.asOf}` : ''}
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -155,7 +159,7 @@ export default function HoldingsAnalysis() {
 
       {loading ? (
         <div className="border-t border-[#21262d] px-4 py-8 text-center text-sm text-[#8b949e]">
-          Loading close-price analysis…
+          Loading market analysis…
         </div>
       ) : error ? (
         <div className="border-t border-[#21262d] px-4 py-6 text-center">
@@ -266,7 +270,12 @@ export default function HoldingsAnalysis() {
           </div>
           {data && data.errors.length > 0 && (
             <p className="border-t border-[#21262d] px-4 py-2 text-xs text-amber-300">
-              No price history for {data.errors.map(item => item.symbol).join(', ')}. Totals use available symbols.
+              No historical data for {data.errors.map(item => item.symbol).join(', ')}. Longer-period totals use available symbols.
+            </p>
+          )}
+          {data && (data.quoteErrors?.length || 0) > 0 && (
+            <p className="border-t border-[#21262d] px-4 py-2 text-xs text-amber-300">
+              No matching regular-session quote for {data.quoteErrors?.map(item => item.symbol).join(', ')}. Same-session completed closes are used when available; otherwise symbols are excluded. Val uses {data.aggregate.marketValueIncludedSymbols}/{data.holdings.length} and 1D uses {data.oneDay?.includedSymbols ?? data.aggregate.growth['1']?.includedSymbols ?? 0}/{data.holdings.length} symbols.
             </p>
           )}
           {data && GROWTH_PERIODS.some(period => data.aggregate.growth[String(period)]?.missingSymbols > 0) && (
@@ -278,7 +287,10 @@ export default function HoldingsAnalysis() {
             </p>
           )}
           <p className="border-t border-[#21262d] px-4 py-2 text-[11px] text-[#6b7280]">
-            Growth applies today’s combined share quantities to historical closes; it is not transaction-adjusted portfolio performance.
+            {data?.oneDay?.source === 'regular-session-quote'
+              ? '1D uses the latest available regular-session price versus its previous close; outside trading hours it uses the latest close versus the close before it.'
+              : '1D is using the latest two completed closes because a current regular-session quote was unavailable.'}
+            {' '}3D–60D use completed closes. Current combined quantities are applied throughout.
           </p>
         </>
       )}

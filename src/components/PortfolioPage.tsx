@@ -136,7 +136,7 @@ export default function PortfolioPage({ portfolioKey, holdings, onUpdateHoldings
           </span>
         </div>
         <p className="text-xs text-[#8b949e] mt-1">
-          Prices shown are close prices from Marketdata.app&nbsp;&nbsp;
+          Prices shown are regular-session prices from Marketdata.app&nbsp;&nbsp;
           <span className="text-[#6b7280]">(as of {timeShort})</span>
         </p>
       </div>

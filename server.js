@@ -6,10 +6,12 @@ import { google } from 'googleapis'
 import cron from 'node-cron'
 import {
   ANALYSIS_PERIODS,
+  applyRegularSessionQuotes,
   aggregateHoldingsBySymbol,
   calculateGrowthAggregate,
   calculateHoldingGrowth,
   normalizeCompletedCandles,
+  normalizeRegularSessionQuotes,
 } from './server-analysis.js'
 
 // Load .env manually (no dotenv dependency needed)
@@ -87,7 +89,9 @@ app.use(express.static(distPath))
 
 /**
  * GET /api/quotes?symbols=AAPL,TSLA,GOOG
- * Returns real-time quote data from marketdata.app
+ * Returns regular-session quote data from marketdata.app. During market hours
+ * this is the latest trade versus the previous close; outside market hours it
+ * is the latest close versus the close before it.
  */
 app.get('/api/quotes', async (req, res) => {
   const raw = req.query.symbols
@@ -111,7 +115,7 @@ app.get('/api/quotes', async (req, res) => {
   try {
     const results = await Promise.allSettled(
       symbols.map(symbol =>
-        fetch(`${MARKETDATA_BASE}/stocks/quotes/${symbol}/`, {
+        fetch(`${MARKETDATA_BASE}/stocks/quotes/${symbol}/?extended=false`, {
           headers: {
             Authorization: `Bearer ${MARKETDATA_TOKEN}`,
             Accept: 'application/json',
@@ -479,6 +483,38 @@ async function fetchDailyCandles(symbol, parentSignal) {
   throw lastError || new Error('Price history request failed')
 }
 
+async function fetchRegularSessionQuotes(symbols) {
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), 10000)
+  const uniqueSymbols = [...new Set(['SPY', ...symbols])]
+  const url = `${MARKETDATA_BASE}/stocks/quotes/?symbols=${encodeURIComponent(uniqueSymbols.join(','))}&extended=false`
+
+  try {
+    const response = await fetch(url, {
+      headers: { Authorization: `Bearer ${MARKETDATA_TOKEN}`, Accept: 'application/json' },
+      signal: controller.signal,
+    })
+    const data = await response.json().catch(() => ({}))
+    if (!response.ok || data.s !== 'ok') {
+      throw new Error(data.errmsg || `Marketdata.app returned ${response.status}`)
+    }
+
+    const quotes = normalizeRegularSessionQuotes(data)
+    const canonicalSessionDate = quotes.SPY?.sessionDate || Object.values(quotes)
+      .map(quote => quote.sessionDate)
+      .filter(Boolean)
+      .sort()
+      .at(-1) || null
+    return {
+      quotes,
+      canonicalSessionDate,
+      retrievedAt: new Date().toISOString(),
+    }
+  } finally {
+    clearTimeout(timeout)
+  }
+}
+
 async function buildHoldingsGrowthPayload(aggregated) {
   const controller = new AbortController()
   const deadline = setTimeout(() => controller.abort(), 35000)
@@ -552,29 +588,56 @@ app.get('/api/holdings/growth', async (_req, res) => {
     ).finally(() => clearTimeout(sheetTimeout))
     const aggregated = aggregateHoldingsBySymbol(Object.fromEntries(portfolioEntries))
     const cacheKey = aggregated.map(holding => `${holding.symbol}:${holding.shares}`).join('|')
+    const quoteOutcomePromise = fetchRegularSessionQuotes(
+      aggregated.map(holding => holding.symbol)
+    ).then(
+      value => ({ value, error: null }),
+      error => ({ value: null, error })
+    )
+
+    let historicalPayload
+    let cacheHit = false
 
     if (
       holdingsGrowthCache.payload &&
       holdingsGrowthCache.key === cacheKey &&
       holdingsGrowthCache.expiresAt > Date.now()
     ) {
-      return res.json({ ...holdingsGrowthCache.payload, cached: true })
+      historicalPayload = holdingsGrowthCache.payload
+      cacheHit = true
+    } else {
+      if (!holdingsGrowthInFlight.has(cacheKey)) {
+        const pending = buildHoldingsGrowthPayload(aggregated)
+          .finally(() => holdingsGrowthInFlight.delete(cacheKey))
+        holdingsGrowthInFlight.set(cacheKey, pending)
+      }
+
+      historicalPayload = await holdingsGrowthInFlight.get(cacheKey)
+      holdingsGrowthCache = {
+        key: cacheKey,
+        expiresAt: Date.now() + GROWTH_CACHE_MS,
+        payload: historicalPayload,
+      }
     }
 
-    if (!holdingsGrowthInFlight.has(cacheKey)) {
-      const pending = buildHoldingsGrowthPayload(aggregated)
-        .finally(() => holdingsGrowthInFlight.delete(cacheKey))
-      holdingsGrowthInFlight.set(cacheKey, pending)
+    const quoteOutcome = await quoteOutcomePromise
+    if (quoteOutcome.error) {
+      console.warn('Regular-session quote overlay failed:', quoteOutcome.error.message)
     }
+    const payload = quoteOutcome.value
+      ? applyRegularSessionQuotes(
+          historicalPayload,
+          quoteOutcome.value.quotes,
+          quoteOutcome.value.canonicalSessionDate,
+          quoteOutcome.value.retrievedAt
+        )
+      : applyRegularSessionQuotes(historicalPayload, {}, null, null)
 
-    const payload = await holdingsGrowthInFlight.get(cacheKey)
-    holdingsGrowthCache = {
-      key: cacheKey,
-      expiresAt: Date.now() + GROWTH_CACHE_MS,
-      payload,
-    }
-
-    res.json(payload)
+    res.json({
+      ...payload,
+      cached: cacheHit,
+      quoteError: quoteOutcome.error?.message || null,
+    })
   } catch (err) {
     console.error('Holdings growth error:', err.message)
     res.status(500).json({ error: 'Failed to calculate holdings growth', detail: err.message })
@@ -589,7 +652,7 @@ async function fetchLivePrices(symbols) {
   if (!MARKETDATA_TOKEN || symbols.length === 0) return {}
   const results = await Promise.allSettled(
     symbols.map(symbol =>
-      fetch(`${MARKETDATA_BASE}/stocks/quotes/${symbol}/`, {
+      fetch(`${MARKETDATA_BASE}/stocks/quotes/${symbol}/?extended=false`, {
         headers: { Authorization: `Bearer ${MARKETDATA_TOKEN}`, Accept: 'application/json' },
       }).then(r => r.json()).then(data => ({ symbol, price: data.s === 'ok' ? data.last?.[0] : null }))
     )
