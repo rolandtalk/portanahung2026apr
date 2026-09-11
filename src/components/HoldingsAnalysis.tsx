@@ -6,6 +6,7 @@ import {
   HoldingsGrowthRow,
   HoldingsGrowthResponse,
 } from '../services/growth'
+import AssetValueChartModal from './AssetValueChartModal'
 
 type DisplayMode = 'percent' | 'value'
 type SortColumn = 'symbol' | 'marketValue' | GrowthPeriod
@@ -49,6 +50,7 @@ export default function HoldingsAnalysis({ refreshKey }: Props) {
   const [sortColumn, setSortColumn] = useState<SortColumn>('marketValue')
   const [sortDirection, setSortDirection] = useState<SortDirection>('desc')
   const [data, setData] = useState<HoldingsGrowthResponse | null>(null)
+  const [avcOpen, setAvcOpen] = useState(false)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
@@ -77,6 +79,8 @@ export default function HoldingsAnalysis({ refreshKey }: Props) {
     setSortColumn(column)
     setSortDirection(column === 'symbol' ? 'asc' : 'desc')
   }
+
+  const closeAvc = useCallback(() => setAvcOpen(false), [])
 
   const rows = useMemo(
     () => [...(data?.holdings || [])].sort((a, b) => {
@@ -154,6 +158,16 @@ export default function HoldingsAnalysis({ refreshKey }: Props) {
               Val
             </button>
           </div>
+          <button
+            type="button"
+            onClick={() => setAvcOpen(true)}
+            disabled={!data?.avc}
+            aria-haspopup="dialog"
+            aria-label="Open Asset Value Chart"
+            className="min-h-9 rounded-md border border-blue-500/70 bg-blue-950/40 px-3 text-xs font-semibold text-blue-300 transition-colors hover:border-blue-400 hover:bg-blue-900/50 hover:text-white focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:cursor-not-allowed disabled:border-[#374151] disabled:bg-transparent disabled:text-[#6b7280]"
+          >
+            AVC
+          </button>
         </div>
       </div>
 
@@ -294,6 +308,7 @@ export default function HoldingsAnalysis({ refreshKey }: Props) {
           </p>
         </>
       )}
+      <AssetValueChartModal open={avcOpen} data={data?.avc || null} onClose={closeAvc} />
     </div>
   )
 }

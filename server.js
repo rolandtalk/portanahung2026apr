@@ -8,6 +8,7 @@ import {
   ANALYSIS_PERIODS,
   applyRegularSessionQuotes,
   aggregateHoldingsBySymbol,
+  buildAssetValueCharts,
   calculateGrowthAggregate,
   calculateHoldingGrowth,
   normalizeCompletedCandles,
@@ -487,7 +488,7 @@ async function fetchDailyCandles(symbol, parentSignal) {
 async function fetchRegularSessionQuotes(symbols) {
   const controller = new AbortController()
   const timeout = setTimeout(() => controller.abort(), 10000)
-  const uniqueSymbols = [...new Set(['SPY', ...symbols])]
+  const uniqueSymbols = [...new Set(['SPY', 'QQQ', ...symbols])]
   const url = `${MARKETDATA_BASE}/stocks/quotes/?symbols=${encodeURIComponent(uniqueSymbols.join(','))}&extended=false`
 
   try {
@@ -521,7 +522,7 @@ async function buildHoldingsGrowthPayload(aggregated) {
   const deadline = setTimeout(() => controller.abort(), 35000)
 
   try {
-    const historySymbols = [...new Set(['SPY', ...aggregated.map(holding => holding.symbol)])]
+    const historySymbols = [...new Set(['SPY', 'QQQ', ...aggregated.map(holding => holding.symbol)])]
     const fetched = await mapWithConcurrency(
       historySymbols,
       12,
@@ -557,6 +558,11 @@ async function buildHoldingsGrowthPayload(aggregated) {
       ? rawCanonicalLatest.date
       : null
     const errors = []
+    const chartDates = canonicalCandles.map(candle => candle.date)
+    const alignCloses = candles => {
+      const byDate = new Map(candles.map(candle => [candle.date, candle.close]))
+      return chartDates.map(date => byDate.get(date) ?? null)
+    }
     const holdings = aggregated.map(holding => {
       const message = fetchErrors.get(holding.symbol)
       if (message) errors.push({ symbol: holding.symbol, message })
@@ -565,7 +571,11 @@ async function buildHoldingsGrowthPayload(aggregated) {
         histories.get(holding.symbol) || [],
         canonicalCandles
       )
-      return message ? { ...row, error: message } : row
+      const withChartCloses = {
+        ...row,
+        chartCloses: alignCloses(histories.get(holding.symbol) || []),
+      }
+      return message ? { ...withChartCloses, error: message } : withChartCloses
     })
 
     return {
@@ -580,6 +590,11 @@ async function buildHoldingsGrowthPayload(aggregated) {
       canonicalSymbol,
       canonicalLastClose: canonicalLatest?.close ?? null,
       expectedNextSessionDate,
+      chartDates,
+      benchmarkCloses: {
+        SPY: alignCloses(histories.get('SPY') || []),
+        QQQ: alignCloses(histories.get('QQQ') || []),
+      },
       holdings,
       aggregate: calculateGrowthAggregate(holdings),
       errors,
@@ -654,8 +669,30 @@ app.get('/api/holdings/growth', async (_req, res) => {
         )
       : applyRegularSessionQuotes(historicalPayload, {}, null, null)
 
+    const avc = buildAssetValueCharts(payload, quoteOutcome.value?.quotes || {})
+    const publicHoldings = payload.holdings.map(holding => {
+      const {
+        chartCloses,
+        currentSessionBaselines,
+        nextSessionBaselines,
+        ...publicHolding
+      } = holding
+      return publicHolding
+    })
+    const {
+      chartDates,
+      benchmarkCloses,
+      canonicalSymbol,
+      canonicalLastClose,
+      expectedNextSessionDate,
+      nextSessionBaselineDates,
+      ...publicPayload
+    } = payload
+
     res.json({
-      ...payload,
+      ...publicPayload,
+      holdings: publicHoldings,
+      avc,
       cached: cacheHit,
       quoteError: quoteOutcome.error?.message || null,
     })

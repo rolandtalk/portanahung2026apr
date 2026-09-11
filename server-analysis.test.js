@@ -4,11 +4,37 @@ import {
   ANALYSIS_PERIODS,
   applyRegularSessionQuotes,
   aggregateHoldingsBySymbol,
+  buildAssetValueCharts,
   calculateGrowthAggregate,
   calculateHoldingGrowth,
   normalizeCompletedCandles,
   normalizeRegularSessionQuotes,
 } from './server-analysis.js'
+
+function makeAvcPayload() {
+  const dates = Array.from({ length: 61 }, (_, index) => `2026-session-${String(index + 1).padStart(3, '0')}`)
+  const makeRow = (symbol, shares, chartCloses, marketValue) => ({
+    symbol,
+    shares,
+    chartCloses,
+    marketValue,
+  })
+  return {
+    asOf: dates.at(-1),
+    analysisEndpoint: { source: 'completed-closes', asOf: dates.at(-1) },
+    chartDates: dates,
+    benchmarkCloses: {
+      SPY: dates.map((_, index) => 100 + index),
+      QQQ: dates.map((_, index) => 200 + index * 2),
+    },
+    holdings: [
+      makeRow('AAA', 2, dates.map((_, index) => 10 + index), 140),
+      makeRow('BBB', 1, dates.map((_, index) => 20 + index * 2), 140),
+      makeRow('CCC', 1, dates.map((_, index) => 30 + index), 90),
+      makeRow('DDD', 1, dates.map((_, index) => index === 10 ? null : 40 + index), 100),
+    ],
+  }
+}
 
 function makeHistoricalPayload() {
   const canonicalCandles = [
@@ -416,4 +442,102 @@ test('falls back wholly to completed closes when quotes trail candle history', (
   assert.equal(result.oneDay.missingSymbols, 0)
   assert.equal(result.aggregate.growth[1].valueChange, 2)
   assert.deepEqual(result.holdings, payload.holdings)
+})
+
+test('builds 21- and 61-point AVC curves with a shared baseline of 100', () => {
+  const result = buildAssetValueCharts(makeAvcPayload())
+
+  assert.equal(result.charts['20'].dates.length, 21)
+  assert.equal(result.charts['60'].dates.length, 61)
+  assert.equal(result.charts['20'].assetsByExclusion['0'][0], 100)
+  assert.equal(result.charts['60'].assetsByExclusion['0'][0], 100)
+  assert.equal(result.charts['20'].benchmarks.SPY[0], 100)
+  assert.equal(result.charts['20'].benchmarks.QQQ[0], 100)
+  assert.deepEqual(result.charts['20'].includedSymbols, ['AAA', 'BBB', 'CCC', 'DDD'])
+  assert.deepEqual(result.charts['60'].includedSymbols, ['AAA', 'BBB', 'CCC'])
+  assert.deepEqual(result.charts['60'].omittedSymbols, ['DDD'])
+})
+
+test('sums holding values before normalizing and precomputes top-holding exclusions', () => {
+  const result = buildAssetValueCharts(makeAvcPayload())
+  const chart = result.charts['20']
+  const start = 40
+  const allStart = 2 * (10 + start) + (20 + start * 2) + (30 + start) + (40 + start)
+  const allEnd = 2 * 70 + 140 + 90 + 100
+  const expectedAllEnd = (allEnd / allStart) * 100
+
+  assert.deepEqual(result.topHoldings.map(item => item.symbol), ['AAA', 'BBB', 'DDD'])
+  assert.ok(Math.abs(chart.assetsByExclusion['0'].at(-1) - expectedAllEnd) < 1e-10)
+  assert.deepEqual(Object.keys(chart.assetsByExclusion), ['0', '1', '2', '3', '4', '5', '6', '7'])
+  const expectedEndpoints = [
+    470 / 350,
+    330 / 250,
+    330 / 250,
+    190 / 150,
+    370 / 270,
+    230 / 170,
+    230 / 170,
+    90 / 70,
+  ].map(ratio => ratio * 100)
+  for (let mask = 0; mask < 8; mask++) {
+    assert.equal(chart.assetsByExclusion[String(mask)].length, 21)
+    assert.equal(chart.assetsByExclusion[String(mask)][0], 100)
+    assert.ok(Math.abs(chart.assetsByExclusion[String(mask)].at(-1) - expectedEndpoints[mask]) < 1e-10)
+  }
+})
+
+test('returns no asset curve when every eligible holding is excluded', () => {
+  const payload = makeAvcPayload()
+  payload.holdings = payload.holdings.slice(0, 3).map((holding, index) => ({
+    ...holding,
+    shares: holding.shares + 0.123 * (index + 1),
+    marketValue: 300 - index,
+  }))
+  const result = buildAssetValueCharts(payload)
+
+  assert.equal(result.charts['20'].assetsByExclusion['7'], null)
+  assert.equal(result.charts['60'].assetsByExclusion['7'], null)
+})
+
+test('appends one aligned live endpoint and shifts both AVC windows', () => {
+  const payload = makeAvcPayload()
+  payload.analysisEndpoint = { source: 'regular-session-quote', asOf: '2026-session-062' }
+  payload.asOf = '2026-session-062'
+  const quotes = Object.fromEntries([
+    ['SPY', 161],
+    ['QQQ', 322],
+    ['AAA', 71],
+    ['BBB', 142],
+    ['CCC', 91],
+    ['DDD', 101],
+  ].map(([symbol, price]) => [symbol, {
+    price,
+    sessionDate: '2026-session-062',
+  }]))
+  const result = buildAssetValueCharts(payload, quotes)
+
+  assert.equal(result.endpointSource, 'regular-session-quote')
+  assert.equal(result.asOf, '2026-session-062')
+  assert.equal(result.charts['20'].dates.length, 21)
+  assert.equal(result.charts['20'].dates[0], '2026-session-042')
+  assert.equal(result.charts['20'].dates.at(-1), '2026-session-062')
+  assert.equal(result.charts['60'].dates[0], '2026-session-002')
+  assert.equal(result.charts['60'].dates.at(-1), '2026-session-062')
+  assert.equal(result.charts['60'].assetsByExclusion['0'][0], 100)
+  assert.equal(result.charts['60'].benchmarks.SPY[0], 100)
+  assert.equal(result.charts['60'].benchmarks.QQQ[0], 100)
+})
+
+test('keeps AVC comparisons on completed closes when a live benchmark is missing', () => {
+  const payload = makeAvcPayload()
+  payload.analysisEndpoint = { source: 'regular-session-quote', asOf: '2026-session-062' }
+  payload.asOf = '2026-session-062'
+  const result = buildAssetValueCharts(payload, {
+    SPY: { price: 161, sessionDate: '2026-session-062' },
+  })
+
+  assert.equal(result.endpointSource, 'completed-closes')
+  assert.equal(result.asOf, '2026-session-061')
+  assert.equal(result.charts['20'].dates.at(-1), '2026-session-061')
+  assert.ok(Math.abs(result.charts['20'].benchmarks.QQQ.at(-1) - (320 / 280) * 100) < 1e-10)
 })

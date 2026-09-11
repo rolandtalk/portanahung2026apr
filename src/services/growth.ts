@@ -27,6 +27,38 @@ export interface AggregateGrowthMetric {
   missingSymbols: number
 }
 
+export type AvcPeriod = 20 | 60
+
+export interface AvcTopHolding {
+  symbol: string
+  rank: number
+  shares: number
+  marketValue: number
+  weightPct: number | null
+  availablePeriods: AvcPeriod[]
+}
+
+export interface AvcChartWindow {
+  dates: string[]
+  assetsByExclusion: Record<string, number[] | null>
+  benchmarks: {
+    SPY: number[] | null
+    QQQ: number[] | null
+  }
+  includedSymbols: string[]
+  omittedSymbols: string[]
+}
+
+export interface AssetValueChartData {
+  periods: AvcPeriod[]
+  asOf: string | null
+  endpointSource: 'regular-session-quote' | 'completed-closes'
+  quantityBasis: 'current-combined-shares'
+  adjustment: 'split-adjusted-price-return'
+  topHoldings: AvcTopHolding[]
+  charts: Record<string, AvcChartWindow>
+}
+
 export interface HoldingsGrowthResponse {
   periods: GrowthPeriod[]
   asOf: string | null
@@ -53,6 +85,7 @@ export interface HoldingsGrowthResponse {
     includedSymbols: number
     missingSymbols: number
   }
+  avc?: AssetValueChartData
   retrievedAt: string
   cached: boolean
 }
