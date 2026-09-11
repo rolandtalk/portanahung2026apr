@@ -1,6 +1,8 @@
 import React, { useState } from 'react'
 import { API_BASE } from '../services/apiBase'
 
+const REPOSITORY_URL = 'https://github.com/rolandtalk/portanahung2026apr'
+
 export default function ProductionDomainRemark() {
   const [open, setOpen] = useState(false)
 
@@ -9,10 +11,10 @@ export default function ProductionDomainRemark() {
       <button
         type="button"
         onClick={() => setOpen(value => !value)}
-        aria-label="Show production public domain"
+        aria-label="Show production links"
         aria-expanded={open}
         aria-controls="production-domain-remark"
-        title="Production public domain"
+        title="Production links"
         className={`flex h-8 w-8 items-center justify-center rounded border transition-colors ${
           open
             ? 'border-blue-500 bg-blue-600/20 text-blue-300'
@@ -49,6 +51,17 @@ export default function ProductionDomainRemark() {
             className="block break-all text-sm text-blue-400 hover:text-blue-300"
           >
             {API_BASE}
+          </a>
+          <div className="mb-1 mt-3 text-xs font-semibold uppercase tracking-wide text-[#8b949e]">
+            GitHub repository
+          </div>
+          <a
+            href={REPOSITORY_URL}
+            target="_blank"
+            rel="noreferrer"
+            className="block break-all text-sm text-blue-400 hover:text-blue-300"
+          >
+            {REPOSITORY_URL}
           </a>
         </div>
       )}
