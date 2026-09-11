@@ -52,7 +52,7 @@ export function aggregateHoldingsBySymbol(holdingsByPortfolio) {
     .sort((a, b) => a.symbol.localeCompare(b.symbol))
 }
 
-export function normalizeCompletedCandles(raw, now = new Date()) {
+export function normalizeDailyCandles(raw) {
   const closes = Array.isArray(raw?.c) ? raw.c : []
   const timestamps = Array.isArray(raw?.t) ? raw.t : []
   const candles = []
@@ -66,6 +66,11 @@ export function normalizeCompletedCandles(raw, now = new Date()) {
   }
 
   candles.sort((a, b) => a.timestamp - b.timestamp)
+  return candles
+}
+
+export function normalizeCompletedCandles(raw, now = new Date()) {
+  const candles = normalizeDailyCandles(raw)
 
   // A daily candle can represent the still-open or 15-minute-delayed session.
   // Analysis is based on completed closes, so omit today's candle until the
@@ -88,23 +93,23 @@ export function normalizeRegularSessionQuotes(raw) {
     const changeValue = raw?.change?.[index]
     const updatedValue = raw?.updated?.[index]
     const price = Number(priceValue)
-    const change = Number(changeValue)
+    const change = changeValue != null && Number.isFinite(Number(changeValue))
+      ? Number(changeValue)
+      : null
     const updated = Number(updatedValue)
     if (
       !symbol ||
       priceValue == null ||
-      changeValue == null ||
       updatedValue == null ||
       !Number.isFinite(price) ||
-      !Number.isFinite(change) ||
       !Number.isFinite(updated)
     ) continue
 
-    const previousClose = price - change
+    const previousClose = change == null ? null : price - change
     const rawPct = raw?.changepct?.[index]
     const pct = rawPct != null && Number.isFinite(Number(rawPct))
       ? Number(rawPct) * 100
-      : previousClose !== 0
+      : previousClose != null && previousClose !== 0
         ? (change / previousClose) * 100
         : null
 
@@ -127,16 +132,37 @@ export function calculateHoldingGrowth(holding, candles, canonicalCandles = cand
   const latestSession = canonicalCandles[latestIndex]
   const latest = latestSession ? candleByDate.get(latestSession.date) : null
   const growth = {}
+  const currentSessionBaselines = {}
+  const nextSessionBaselines = {}
 
   for (const period of ANALYSIS_PERIODS) {
     const baselineSession = canonicalCandles[latestIndex - period]
     const baseline = baselineSession ? candleByDate.get(baselineSession.date) : null
+    currentSessionBaselines[period] = baseline && baseline.close !== 0
+      ? {
+          baselineDate: baseline.date,
+          baselineClose: baseline.close,
+        }
+      : null
     growth[period] = latest && baseline && baseline.close !== 0
       ? {
           baselineDate: baseline.date,
           baselineClose: baseline.close,
           pct: ((latest.close / baseline.close) - 1) * 100,
           valueChange: holding.shares * (latest.close - baseline.close),
+        }
+      : null
+
+    // If a quote belongs to the session immediately after latestSession, an
+    // N-day comparison starts one candle later than the completed-close form.
+    const nextSessionBaseline = canonicalCandles[latestIndex - period + 1]
+    const matchingNextBaseline = nextSessionBaseline
+      ? candleByDate.get(nextSessionBaseline.date)
+      : null
+    nextSessionBaselines[period] = matchingNextBaseline && matchingNextBaseline.close !== 0
+      ? {
+          baselineDate: matchingNextBaseline.date,
+          baselineClose: matchingNextBaseline.close,
         }
       : null
   }
@@ -147,6 +173,8 @@ export function calculateHoldingGrowth(holding, candles, canonicalCandles = cand
     lastClose: latest?.close ?? null,
     marketValue: latest ? holding.shares * latest.close : null,
     growth,
+    currentSessionBaselines,
+    nextSessionBaselines,
   }
 }
 
@@ -184,6 +212,10 @@ export function applyRegularSessionQuotes(payload, quotes, canonicalSessionDate,
   const baseOneDay = payload.aggregate?.growth?.[1] || payload.aggregate?.growth?.['1']
   const fallback = {
     ...payload,
+    analysisEndpoint: {
+      source: 'completed-closes',
+      asOf: payload.asOf,
+    },
     oneDay: {
       source: 'completed-closes',
       asOf: payload.asOf,
@@ -196,21 +228,50 @@ export function applyRegularSessionQuotes(payload, quotes, canonicalSessionDate,
   }
 
   // If the quote service is behind the candle history, completed candles are
-  // more recent and already provide the correct closed-session 1D comparison.
+  // more recent and already provide the correct closed-session comparisons.
   if (!canonicalSessionDate || (payload.asOf && canonicalSessionDate < payload.asOf)) {
     return fallback
   }
 
+  const quoteIsNextSession = Boolean(payload.asOf && canonicalSessionDate > payload.asOf)
+  if (quoteIsNextSession) {
+    const referenceQuote = quotes[payload.canonicalSymbol]
+    const previousClose = referenceQuote
+      && Number.isFinite(referenceQuote.change)
+      ? referenceQuote.price - referenceQuote.change
+      : null
+    const continuityTolerance = Number.isFinite(payload.canonicalLastClose)
+      ? Math.max(0.02, Math.abs(payload.canonicalLastClose) * 0.0005)
+      : 0
+    const observedNextSessionMatches = !payload.expectedNextSessionDate ||
+      canonicalSessionDate === payload.expectedNextSessionDate
+    const hasContinuity = (
+      observedNextSessionMatches &&
+      referenceQuote?.sessionDate === canonicalSessionDate &&
+      Number.isFinite(previousClose) &&
+      Number.isFinite(payload.canonicalLastClose) &&
+      Math.abs(previousClose - payload.canonicalLastClose) <= continuityTolerance
+    )
+
+    // A newer calendar date is not enough to prove it is the next trading
+    // session. Fall back rather than shifting every period against stale data.
+    if (!hasContinuity) return fallback
+  }
+
+  const selectedBaselineDates = quoteIsNextSession
+    ? payload.nextSessionBaselineDates || {}
+    : payload.baselineDates || {}
+
   const quoteErrors = []
   const holdings = payload.holdings.map(holding => {
     const quote = quotes[holding.symbol]
-    if (!quote || quote.sessionDate !== canonicalSessionDate || !Number.isFinite(quote.pct)) {
+    if (!quote || quote.sessionDate !== canonicalSessionDate || !Number.isFinite(quote.price)) {
       quoteErrors.push({
         symbol: holding.symbol,
         message: quote
           ? quote.sessionDate !== canonicalSessionDate
             ? `Quote belongs to ${quote.sessionDate}, not ${canonicalSessionDate}`
-            : 'Quote change unavailable'
+            : 'Quote price unavailable'
           : 'Regular-session quote unavailable',
       })
 
@@ -226,72 +287,68 @@ export function applyRegularSessionQuotes(payload, quotes, canonicalSessionDate,
         asOf: null,
         lastClose: null,
         marketValue: null,
-        growth: { ...holding.growth, 1: null },
+        growth: Object.fromEntries(ANALYSIS_PERIODS.map(period => [period, null])),
       }
     }
 
-    const baselineDate = canonicalSessionDate > payload.asOf
-      ? payload.asOf
-      : holding.growth?.[1]?.baselineDate || payload.baselineDates?.[1] || null
-    const baselineClose = quote.price - quote.change
+    const growth = Object.fromEntries(ANALYSIS_PERIODS.map(period => {
+      const exactBaseline = quoteIsNextSession
+        ? holding.nextSessionBaselines?.[period]
+        : holding.currentSessionBaselines?.[period]
+      if (
+        !exactBaseline ||
+        !Number.isFinite(exactBaseline.baselineClose) ||
+        exactBaseline.baselineClose === 0
+      ) {
+        return [period, null]
+      }
+
+      const quotePreviousClose = Number.isFinite(quote.change)
+        ? quote.price - quote.change
+        : null
+      const baseline = period === 1 && Number.isFinite(quotePreviousClose)
+        ? {
+            baselineDate: exactBaseline.baselineDate,
+            baselineClose: quotePreviousClose,
+          }
+        : exactBaseline
+
+      return [period, {
+        baselineDate: baseline.baselineDate,
+        baselineClose: baseline.baselineClose,
+        pct: ((quote.price / baseline.baselineClose) - 1) * 100,
+        valueChange: holding.shares * (quote.price - baseline.baselineClose),
+      }]
+    }))
+
     return {
       ...holding,
       asOf: canonicalSessionDate,
       lastClose: quote.price,
       marketValue: holding.shares * quote.price,
-      growth: {
-        ...holding.growth,
-        1: {
-          baselineDate,
-          baselineClose,
-          pct: quote.pct,
-          valueChange: holding.shares * quote.change,
-        },
-      },
+      growth,
     }
   })
 
-  const valued = holdings.filter(holding => Number.isFinite(holding.marketValue))
-  const includedOneDay = holdings.filter(holding => holding.growth?.[1])
-  const marketValue = valued.reduce((sum, holding) => sum + holding.marketValue, 0)
-  const oneDayCurrentValue = includedOneDay.reduce(
-    (sum, holding) => sum + holding.marketValue,
-    0
-  )
-  const oneDayBaselineValue = includedOneDay.reduce(
-    (sum, holding) => sum + holding.shares * holding.growth[1].baselineClose,
-    0
-  )
-  const oneDayValueChange = oneDayCurrentValue - oneDayBaselineValue
+  const aggregate = calculateGrowthAggregate(holdings)
+  const oneDay = aggregate.growth[1]
 
   return {
     ...payload,
+    asOf: canonicalSessionDate,
+    baselineDates: selectedBaselineDates,
     holdings,
-    aggregate: {
-      ...payload.aggregate,
-      marketValue,
-      marketValueIncludedSymbols: valued.length,
-      marketValueMissingSymbols: holdings.length - valued.length,
-      growth: {
-        ...payload.aggregate.growth,
-        1: {
-          pct: oneDayBaselineValue !== 0
-            ? (oneDayValueChange / oneDayBaselineValue) * 100
-            : null,
-          valueChange: oneDayValueChange,
-          includedSymbols: includedOneDay.length,
-          missingSymbols: holdings.length - includedOneDay.length,
-        },
-      },
+    aggregate,
+    analysisEndpoint: {
+      source: 'regular-session-quote',
+      asOf: canonicalSessionDate,
     },
     oneDay: {
       source: 'regular-session-quote',
       asOf: canonicalSessionDate,
-      baselineDate: canonicalSessionDate > payload.asOf
-        ? payload.asOf
-        : payload.baselineDates?.[1] || null,
-      includedSymbols: includedOneDay.length,
-      missingSymbols: holdings.length - includedOneDay.length,
+      baselineDate: selectedBaselineDates[1] || selectedBaselineDates['1'] || null,
+      includedSymbols: oneDay?.includedSymbols ?? 0,
+      missingSymbols: oneDay?.missingSymbols ?? holdings.length,
     },
     quoteErrors,
     quoteRetrievedAt: quoteRetrievedAt || null,

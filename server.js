@@ -11,6 +11,7 @@ import {
   calculateGrowthAggregate,
   calculateHoldingGrowth,
   normalizeCompletedCandles,
+  normalizeDailyCandles,
   normalizeRegularSessionQuotes,
 } from './server-analysis.js'
 
@@ -527,20 +528,34 @@ async function buildHoldingsGrowthPayload(aggregated) {
       symbol => fetchDailyCandles(symbol, controller.signal)
     )
     const histories = new Map()
+    const rawHistories = new Map()
     const fetchErrors = new Map()
 
     historySymbols.forEach((symbol, index) => {
       const result = fetched[index]
       if (result.status === 'fulfilled') {
+        rawHistories.set(symbol, normalizeDailyCandles(result.value))
         histories.set(symbol, normalizeCompletedCandles(result.value))
       } else {
         fetchErrors.set(symbol, result.reason?.message || 'Price history unavailable')
       }
     })
 
-    const successfulHistories = [...histories.values()].filter(candles => candles.length > 0)
-    const canonicalCandles = histories.get('SPY') ||
-      successfulHistories.sort((a, b) => b.length - a.length)[0] || []
+    const successfulHistories = [...histories.entries()]
+      .filter(([, candles]) => candles.length > 0)
+      .sort(([, a], [, b]) => b.length - a.length)
+    const canonicalEntry = histories.get('SPY')?.length
+      ? ['SPY', histories.get('SPY')]
+      : successfulHistories[0] || [null, []]
+    const [canonicalSymbol, canonicalCandles] = canonicalEntry
+    const rawCanonicalCandles = canonicalSymbol
+      ? rawHistories.get(canonicalSymbol) || []
+      : []
+    const canonicalLatest = canonicalCandles.at(-1) || null
+    const rawCanonicalLatest = rawCanonicalCandles.at(-1) || null
+    const expectedNextSessionDate = rawCanonicalLatest?.date > canonicalLatest?.date
+      ? rawCanonicalLatest.date
+      : null
     const errors = []
     const holdings = aggregated.map(holding => {
       const message = fetchErrors.get(holding.symbol)
@@ -555,10 +570,16 @@ async function buildHoldingsGrowthPayload(aggregated) {
 
     return {
       periods: ANALYSIS_PERIODS,
-      asOf: canonicalCandles.at(-1)?.date || null,
+      asOf: canonicalLatest?.date || null,
       baselineDates: Object.fromEntries(
         ANALYSIS_PERIODS.map(period => [period, canonicalCandles.at(-1 - period)?.date || null])
       ),
+      nextSessionBaselineDates: Object.fromEntries(
+        ANALYSIS_PERIODS.map(period => [period, canonicalCandles.at(-period)?.date || null])
+      ),
+      canonicalSymbol,
+      canonicalLastClose: canonicalLatest?.close ?? null,
+      expectedNextSessionDate,
       holdings,
       aggregate: calculateGrowthAggregate(holdings),
       errors,
@@ -572,8 +593,8 @@ async function buildHoldingsGrowthPayload(aggregated) {
 
 /**
  * GET /api/holdings/growth
- * Aggregates shares across every portfolio and calculates close-price growth
- * over the previous 1, 3, 10, 20 and 60 completed trading sessions.
+ * Aggregates shares across every portfolio and calculates regular-session
+ * growth over the previous 1, 3, 10, 20 and 60 trading sessions.
  */
 app.get('/api/holdings/growth', async (_req, res) => {
   if (!MARKETDATA_TOKEN) {

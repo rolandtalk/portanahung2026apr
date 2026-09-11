@@ -42,6 +42,10 @@ export interface HoldingsGrowthResponse {
   quoteErrors?: Array<{ symbol: string; message: string }>
   quoteError?: string | null
   quoteRetrievedAt?: string | null
+  analysisEndpoint?: {
+    source: 'regular-session-quote' | 'completed-closes'
+    asOf: string | null
+  }
   oneDay?: {
     source: 'regular-session-quote' | 'completed-closes'
     asOf: string | null

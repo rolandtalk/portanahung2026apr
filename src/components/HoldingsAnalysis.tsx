@@ -121,7 +121,7 @@ export default function HoldingsAnalysis({ refreshKey }: Props) {
           <h3 className="text-sm font-semibold text-white">All Holdings Analysis</h3>
           <p className="mt-0.5 text-xs text-[#8b949e]">
             Shares combined across CUB, PSC, DBS and FT
-            {data?.asOf ? ` · longer-period closes through ${data.asOf}` : ''}
+            {data?.asOf ? ` · regular-session prices through ${data.asOf}` : ''}
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -270,12 +270,12 @@ export default function HoldingsAnalysis({ refreshKey }: Props) {
           </div>
           {data && data.errors.length > 0 && (
             <p className="border-t border-[#21262d] px-4 py-2 text-xs text-amber-300">
-              No historical data for {data.errors.map(item => item.symbol).join(', ')}. Longer-period totals use available symbols.
+              No historical data for {data.errors.map(item => item.symbol).join(', ')}. Period totals use available symbols.
             </p>
           )}
           {data && (data.quoteErrors?.length || 0) > 0 && (
             <p className="border-t border-[#21262d] px-4 py-2 text-xs text-amber-300">
-              No matching regular-session quote for {data.quoteErrors?.map(item => item.symbol).join(', ')}. Same-session completed closes are used when available; otherwise symbols are excluded. Val uses {data.aggregate.marketValueIncludedSymbols}/{data.holdings.length} and 1D uses {data.oneDay?.includedSymbols ?? data.aggregate.growth['1']?.includedSymbols ?? 0}/{data.holdings.length} symbols.
+              No matching regular-session quote for {data.quoteErrors?.map(item => item.symbol).join(', ')}. Same-session completed closes are used when available; otherwise affected Analysis values are excluded.
             </p>
           )}
           {data && GROWTH_PERIODS.some(period => data.aggregate.growth[String(period)]?.missingSymbols > 0) && (
@@ -287,10 +287,10 @@ export default function HoldingsAnalysis({ refreshKey }: Props) {
             </p>
           )}
           <p className="border-t border-[#21262d] px-4 py-2 text-[11px] text-[#6b7280]">
-            {data?.oneDay?.source === 'regular-session-quote'
-              ? '1D uses the latest available regular-session price versus its previous close; outside trading hours it uses the latest close versus the close before it.'
-              : '1D is using the latest two completed closes because a current regular-session quote was unavailable.'}
-            {' '}3D–60D use completed closes. Current combined quantities are applied throughout.
+            {(data?.analysisEndpoint?.source || data?.oneDay?.source) === 'regular-session-quote'
+              ? 'During trading, every period uses the latest available regular-session price against the close 1, 3, 10, 20 or 60 trading sessions earlier. Outside trading hours, every period uses the latest close against the corresponding earlier close.'
+              : 'All periods use completed closes because a newer aligned regular-session quote was unavailable.'}
+            {' '}Current combined quantities are applied throughout.
           </p>
         </>
       )}
