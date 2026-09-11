@@ -3,6 +3,7 @@ import { Holding, PortfolioKey } from '../types'
 import { calcStats } from '../App'
 import { loadHistory, HistoryEntry } from '../services/history'
 import ProductionDomainRemark from './ProductionDomainRemark'
+import HoldingsAnalysis from './HoldingsAnalysis'
 
 const PORTFOLIO_KEYS: PortfolioKey[] = ['CUB', 'PSC', 'DBS', 'FT']
 
@@ -37,6 +38,7 @@ export default function SummaryPage({ portfolios, onSelectPortfolio, lastRefresh
   const [refreshing, setRefreshing] = useState(false)
   const [refreshError, setRefreshError] = useState<string | null>(null)
   const [history, setHistory] = useState<HistoryEntry[]>([])
+  const [analysisOpen, setAnalysisOpen] = useState(false)
 
   useEffect(() => {
     loadHistory().then(setHistory)
@@ -129,8 +131,21 @@ export default function SummaryPage({ portfolios, onSelectPortfolio, lastRefresh
 
       {/* ── Portfolio Summary Table ── */}
       <div className="bg-[#161b22] border border-[#30363d] rounded-lg overflow-hidden">
-        <div className="px-4 py-3 border-b border-[#30363d]">
+        <div className="flex items-center justify-between gap-3 px-4 py-3 border-b border-[#30363d]">
           <h2 className="text-base font-semibold text-white">Portfolio Summary</h2>
+          <button
+            type="button"
+            onClick={() => setAnalysisOpen(value => !value)}
+            aria-expanded={analysisOpen}
+            aria-controls="holdings-analysis"
+            className={`rounded border px-3 py-1.5 text-xs font-semibold transition-colors ${
+              analysisOpen
+                ? 'border-blue-500 bg-blue-600 text-white'
+                : 'border-[#374151] text-blue-400 hover:border-blue-500 hover:text-blue-300'
+            }`}
+          >
+            Analysis
+          </button>
         </div>
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
@@ -178,6 +193,7 @@ export default function SummaryPage({ portfolios, onSelectPortfolio, lastRefresh
             </tbody>
           </table>
         </div>
+        {analysisOpen && <HoldingsAnalysis />}
       </div>
 
       {/* ── Historical Data ── */}

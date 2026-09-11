@@ -4,6 +4,13 @@ import { readFileSync } from 'fs'
 import { join, resolve } from 'path'
 import { google } from 'googleapis'
 import cron from 'node-cron'
+import {
+  ANALYSIS_PERIODS,
+  aggregateHoldingsBySymbol,
+  calculateGrowthAggregate,
+  calculateHoldingGrowth,
+  normalizeCompletedCandles,
+} from './server-analysis.js'
 
 // Load .env manually (no dotenv dependency needed)
 try {
@@ -149,6 +156,7 @@ app.get('/api/quotes', async (req, res) => {
 })
 
 const SHEET_ID = '1XsHYx1Ifb-y2jX2mssDCB7ICW4YnhEsjWiDi3F3UIdE'
+const PORTFOLIO_KEYS = ['CUB', 'PSC', 'DBS', 'FT']
 
 /**
  * GET /api/sheet/:tab
@@ -378,19 +386,12 @@ app.get('/api/env-check', (_req, res) => {
   })
 })
 
-// Catch-all: serve index.html for React client-side routing
-app.get('*', (_req, res) => {
-  res.sendFile(join(process.cwd(), 'dist', 'index.html'))
-})
-
 // ─── Daily Snapshot Logic ────────────────────────────────────────────────────
-
-const PORTFOLIO_KEYS = ['CUB', 'PSC', 'DBS', 'FT']
 
 /**
  * Reads holdings from a Google Sheet tab (same CSV logic as GET /api/sheet/:tab).
  */
-async function fetchHoldingsFromSheet(tab) {
+async function fetchHoldingsFromSheet(tab, signal) {
   const url = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent(tab)}`
   const res = await fetch(url, {
     headers: {
@@ -398,6 +399,7 @@ async function fetchHoldingsFromSheet(tab) {
       'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
     },
     redirect: 'follow',
+    signal,
   })
   if (!res.ok) throw new Error(`Sheet fetch failed for ${tab}: ${res.status}`)
   const csv = await res.text()
@@ -411,6 +413,173 @@ async function fetchHoldingsFromSheet(tab) {
   }
   return holdings
 }
+
+const GROWTH_CACHE_MS = 15 * 60 * 1000
+let holdingsGrowthCache = { key: '', expiresAt: 0, payload: null }
+const holdingsGrowthInFlight = new Map()
+
+async function mapWithConcurrency(items, limit, mapper) {
+  const results = new Array(items.length)
+  let nextIndex = 0
+
+  async function worker() {
+    while (nextIndex < items.length) {
+      const index = nextIndex++
+      try {
+        results[index] = { status: 'fulfilled', value: await mapper(items[index], index) }
+      } catch (reason) {
+        results[index] = { status: 'rejected', reason }
+      }
+    }
+  }
+
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker))
+  return results
+}
+
+async function fetchDailyCandles(symbol, parentSignal) {
+  const url = `${MARKETDATA_BASE}/stocks/candles/D/${encodeURIComponent(symbol)}/?countback=62&to=today&adjustsplits=true&adjustdividends=false`
+  let lastError = null
+
+  for (let attempt = 0; attempt < 2; attempt++) {
+    if (parentSignal?.aborted) throw new Error('Analysis request timed out')
+    const controller = new AbortController()
+    const abortFromParent = () => controller.abort()
+    parentSignal?.addEventListener('abort', abortFromParent, { once: true })
+    const timeout = setTimeout(() => controller.abort(), 8000)
+    try {
+      const response = await fetch(url, {
+        headers: { Authorization: `Bearer ${MARKETDATA_TOKEN}`, Accept: 'application/json' },
+        signal: controller.signal,
+      })
+      const data = await response.json().catch(() => ({}))
+      if (response.ok && data.s === 'ok' && Array.isArray(data.c) && Array.isArray(data.t)) {
+        return data
+      }
+
+      const error = new Error(data.errmsg || `Marketdata.app returned ${response.status}`)
+      error.retryable = response.status === 429 || response.status >= 500
+      throw error
+    } catch (error) {
+      lastError = error
+      const retryable = !parentSignal?.aborted && (
+        error.name === 'AbortError' || error.name === 'TypeError' || error.retryable
+      )
+      if (attempt === 0 && retryable) {
+        await new Promise(resolveWait => setTimeout(resolveWait, 350))
+        continue
+      }
+      break
+    } finally {
+      clearTimeout(timeout)
+      parentSignal?.removeEventListener('abort', abortFromParent)
+    }
+  }
+
+  throw lastError || new Error('Price history request failed')
+}
+
+async function buildHoldingsGrowthPayload(aggregated) {
+  const controller = new AbortController()
+  const deadline = setTimeout(() => controller.abort(), 35000)
+
+  try {
+    const historySymbols = [...new Set(['SPY', ...aggregated.map(holding => holding.symbol)])]
+    const fetched = await mapWithConcurrency(
+      historySymbols,
+      12,
+      symbol => fetchDailyCandles(symbol, controller.signal)
+    )
+    const histories = new Map()
+    const fetchErrors = new Map()
+
+    historySymbols.forEach((symbol, index) => {
+      const result = fetched[index]
+      if (result.status === 'fulfilled') {
+        histories.set(symbol, normalizeCompletedCandles(result.value))
+      } else {
+        fetchErrors.set(symbol, result.reason?.message || 'Price history unavailable')
+      }
+    })
+
+    const successfulHistories = [...histories.values()].filter(candles => candles.length > 0)
+    const canonicalCandles = histories.get('SPY') ||
+      successfulHistories.sort((a, b) => b.length - a.length)[0] || []
+    const errors = []
+    const holdings = aggregated.map(holding => {
+      const message = fetchErrors.get(holding.symbol)
+      if (message) errors.push({ symbol: holding.symbol, message })
+      const row = calculateHoldingGrowth(
+        holding,
+        histories.get(holding.symbol) || [],
+        canonicalCandles
+      )
+      return message ? { ...row, error: message } : row
+    })
+
+    return {
+      periods: ANALYSIS_PERIODS,
+      asOf: canonicalCandles.at(-1)?.date || null,
+      baselineDates: Object.fromEntries(
+        ANALYSIS_PERIODS.map(period => [period, canonicalCandles.at(-1 - period)?.date || null])
+      ),
+      holdings,
+      aggregate: calculateGrowthAggregate(holdings),
+      errors,
+      retrievedAt: new Date().toISOString(),
+      cached: false,
+    }
+  } finally {
+    clearTimeout(deadline)
+  }
+}
+
+/**
+ * GET /api/holdings/growth
+ * Aggregates shares across every portfolio and calculates close-price growth
+ * over the previous 1, 3, 10, 20 and 60 completed trading sessions.
+ */
+app.get('/api/holdings/growth', async (_req, res) => {
+  if (!MARKETDATA_TOKEN) {
+    return res.status(500).json({ error: 'MARKETDATA_TOKEN not configured' })
+  }
+
+  try {
+    const sheetController = new AbortController()
+    const sheetTimeout = setTimeout(() => sheetController.abort(), 10000)
+    const portfolioEntries = await Promise.all(
+      PORTFOLIO_KEYS.map(async key => [key, await fetchHoldingsFromSheet(key, sheetController.signal)])
+    ).finally(() => clearTimeout(sheetTimeout))
+    const aggregated = aggregateHoldingsBySymbol(Object.fromEntries(portfolioEntries))
+    const cacheKey = aggregated.map(holding => `${holding.symbol}:${holding.shares}`).join('|')
+
+    if (
+      holdingsGrowthCache.payload &&
+      holdingsGrowthCache.key === cacheKey &&
+      holdingsGrowthCache.expiresAt > Date.now()
+    ) {
+      return res.json({ ...holdingsGrowthCache.payload, cached: true })
+    }
+
+    if (!holdingsGrowthInFlight.has(cacheKey)) {
+      const pending = buildHoldingsGrowthPayload(aggregated)
+        .finally(() => holdingsGrowthInFlight.delete(cacheKey))
+      holdingsGrowthInFlight.set(cacheKey, pending)
+    }
+
+    const payload = await holdingsGrowthInFlight.get(cacheKey)
+    holdingsGrowthCache = {
+      key: cacheKey,
+      expiresAt: Date.now() + GROWTH_CACHE_MS,
+      payload,
+    }
+
+    res.json(payload)
+  } catch (err) {
+    console.error('Holdings growth error:', err.message)
+    res.status(500).json({ error: 'Failed to calculate holdings growth', detail: err.message })
+  }
+})
 
 /**
  * Fetches live prices from marketdata.app for an array of symbols.
@@ -514,6 +683,16 @@ app.post('/api/snapshot/run', async (_req, res) => {
   } catch (err) {
     res.status(500).json({ error: err.message })
   }
+})
+
+app.get('/api/*', (_req, res) => {
+  res.status(404).json({ error: 'API route not found' })
+})
+
+// Catch-all: serve index.html for React client-side routing. Keep this after
+// every API route so unknown app paths, but never API endpoints, receive HTML.
+app.get('*', (_req, res) => {
+  res.sendFile(join(process.cwd(), 'dist', 'index.html'))
 })
 
 // Schedule: 6:00 AM Taiwan time (Asia/Taipei), Monday–Friday
