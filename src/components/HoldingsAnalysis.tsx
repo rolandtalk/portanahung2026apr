@@ -3,10 +3,13 @@ import {
   fetchHoldingsGrowth,
   GROWTH_PERIODS,
   GrowthPeriod,
+  HoldingsGrowthRow,
   HoldingsGrowthResponse,
 } from '../services/growth'
 
 type DisplayMode = 'percent' | 'value'
+type SortColumn = 'symbol' | 'marketValue' | GrowthPeriod
+type SortDirection = 'asc' | 'desc'
 
 function fmtShares(value: number) {
   return value.toLocaleString('en-US', { maximumFractionDigits: 4 })
@@ -29,8 +32,18 @@ function valueColor(value: number | null | undefined) {
   return value >= 0 ? 'text-green-400' : 'text-red-400'
 }
 
+function SortIcon({ active, direction }: { active: boolean; direction: SortDirection }) {
+  return (
+    <span aria-hidden="true" className={active ? 'text-blue-400' : 'text-[#484f58]'}>
+      {active ? (direction === 'asc' ? '▲' : '▼') : '↕'}
+    </span>
+  )
+}
+
 export default function HoldingsAnalysis() {
   const [mode, setMode] = useState<DisplayMode>('percent')
+  const [sortColumn, setSortColumn] = useState<SortColumn>('marketValue')
+  const [sortDirection, setSortDirection] = useState<SortDirection>('desc')
   const [data, setData] = useState<HoldingsGrowthResponse | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -51,14 +64,40 @@ export default function HoldingsAnalysis() {
     load()
   }, [load])
 
+  const handleSort = (column: SortColumn) => {
+    if (sortColumn === column) {
+      setSortDirection(direction => direction === 'asc' ? 'desc' : 'asc')
+      return
+    }
+
+    setSortColumn(column)
+    setSortDirection(column === 'symbol' ? 'asc' : 'desc')
+  }
+
   const rows = useMemo(
     () => [...(data?.holdings || [])].sort((a, b) => {
-      if (a.marketValue == null && b.marketValue == null) return a.symbol.localeCompare(b.symbol)
-      if (a.marketValue == null) return 1
-      if (b.marketValue == null) return -1
-      return b.marketValue - a.marketValue || a.symbol.localeCompare(b.symbol)
+      if (sortColumn === 'symbol') {
+        const comparison = a.symbol.localeCompare(b.symbol)
+        return sortDirection === 'asc' ? comparison : -comparison
+      }
+
+      const getValue = (row: HoldingsGrowthRow) => {
+        if (sortColumn === 'marketValue') return row.marketValue
+        const metric = row.growth[String(sortColumn)]
+        return metric ? (mode === 'percent' ? metric.pct : metric.valueChange) : null
+      }
+      const aValue = getValue(a)
+      const bValue = getValue(b)
+
+      // Missing price history always stays at the bottom in either direction.
+      if (aValue == null && bValue == null) return a.symbol.localeCompare(b.symbol)
+      if (aValue == null) return 1
+      if (bValue == null) return -1
+
+      const comparison = aValue - bValue
+      return (sortDirection === 'asc' ? comparison : -comparison) || a.symbol.localeCompare(b.symbol)
     }),
-    [data]
+    [data, mode, sortColumn, sortDirection]
   )
 
   const renderGrowth = (period: GrowthPeriod, row: typeof rows[number]) => {
@@ -139,11 +178,54 @@ export default function HoldingsAnalysis() {
             <table className="min-w-[720px] w-full text-xs sm:text-sm">
               <thead>
                 <tr className="border-b border-[#30363d] text-[11px] uppercase tracking-wide text-[#8b949e]">
-                  <th scope="col" aria-label="Symbol" className="sticky left-0 z-10 bg-[#161b22] px-3 py-3 text-left">S</th>
+                  <th
+                    scope="col"
+                    aria-sort={sortColumn === 'symbol' ? (sortDirection === 'asc' ? 'ascending' : 'descending') : 'none'}
+                    className="sticky left-0 z-10 bg-[#161b22] p-0 text-left"
+                  >
+                    <button
+                      type="button"
+                      onClick={() => handleSort('symbol')}
+                      aria-label={`Sort by symbol${sortColumn === 'symbol' ? `, currently ${sortDirection === 'asc' ? 'ascending' : 'descending'}` : ''}`}
+                      className="flex w-full items-center gap-1 px-3 py-3 text-left hover:text-white"
+                    >
+                      <span aria-hidden="true">S</span>
+                      <SortIcon active={sortColumn === 'symbol'} direction={sortDirection} />
+                    </button>
+                  </th>
                   <th scope="col" aria-label="Total shares" className="px-2 py-3 text-right">Q</th>
-                  <th scope="col" aria-label="Market value" className="px-2 py-3 text-right">Val</th>
+                  <th
+                    scope="col"
+                    aria-sort={sortColumn === 'marketValue' ? (sortDirection === 'asc' ? 'ascending' : 'descending') : 'none'}
+                    className="p-0 text-right"
+                  >
+                    <button
+                      type="button"
+                      onClick={() => handleSort('marketValue')}
+                      aria-label={`Sort by market value${sortColumn === 'marketValue' ? `, currently ${sortDirection === 'asc' ? 'ascending' : 'descending'}` : ''}`}
+                      className="flex w-full items-center justify-end gap-1 px-2 py-3 hover:text-white"
+                    >
+                      <span aria-hidden="true">Val</span>
+                      <SortIcon active={sortColumn === 'marketValue'} direction={sortDirection} />
+                    </button>
+                  </th>
                   {GROWTH_PERIODS.map(period => (
-                    <th key={period} scope="col" className="px-2 py-3 text-right">{period}D</th>
+                    <th
+                      key={period}
+                      scope="col"
+                      aria-sort={sortColumn === period ? (sortDirection === 'asc' ? 'ascending' : 'descending') : 'none'}
+                      className="p-0 text-right"
+                    >
+                      <button
+                        type="button"
+                        onClick={() => handleSort(period)}
+                        aria-label={`Sort by ${period}-day ${mode === 'percent' ? 'percentage' : 'value'} growth${sortColumn === period ? `, currently ${sortDirection === 'asc' ? 'ascending' : 'descending'}` : ''}`}
+                        className="flex w-full items-center justify-end gap-1 px-2 py-3 hover:text-white"
+                      >
+                        <span aria-hidden="true">{period}D</span>
+                        <SortIcon active={sortColumn === period} direction={sortDirection} />
+                      </button>
+                    </th>
                   ))}
                 </tr>
               </thead>
