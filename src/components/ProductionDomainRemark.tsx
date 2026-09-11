@@ -2,6 +2,8 @@ import React, { useState } from 'react'
 import { API_BASE } from '../services/apiBase'
 
 const REPOSITORY_URL = 'https://github.com/rolandtalk/portanahung2026apr'
+const HOLDINGS_SHEET_NAME = 'Portanahung DB 2026 Apr'
+const HOLDINGS_SHEET_URL = 'https://docs.google.com/spreadsheets/d/1XsHYx1Ifb-y2jX2mssDCB7ICW4YnhEsjWiDi3F3UIdE/edit'
 
 export default function ProductionDomainRemark() {
   const [open, setOpen] = useState(false)
@@ -62,6 +64,21 @@ export default function ProductionDomainRemark() {
             className="block break-all text-sm text-blue-400 hover:text-blue-300"
           >
             {REPOSITORY_URL}
+          </a>
+          <div className="mb-1 mt-3 text-xs font-semibold uppercase tracking-wide text-[#8b949e]">
+            Holdings Google Sheet
+          </div>
+          <a
+            href={HOLDINGS_SHEET_URL}
+            target="_blank"
+            rel="noreferrer"
+            aria-label={`Open ${HOLDINGS_SHEET_NAME} Google Sheet`}
+            className="block text-sm text-blue-400 hover:text-blue-300"
+          >
+            <span className="block font-medium">{HOLDINGS_SHEET_NAME}</span>
+            <span className="mt-0.5 block break-all text-xs text-blue-400/80">
+              {HOLDINGS_SHEET_URL}
+            </span>
           </a>
         </div>
       )}
