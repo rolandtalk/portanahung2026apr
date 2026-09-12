@@ -24,6 +24,9 @@
     "react-dom": "^18.3.1",
     "yahoo-finance2": "^2.13.3"
   },
+  "overrides": {
+    "qs": "^6.16.0"
+  },
   "devDependencies": {
     "@cloudflare/vite-plugin": "^1.33.1",
     "@types/react": "^18.3.1",
