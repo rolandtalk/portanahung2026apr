@@ -93,7 +93,7 @@ export default function SummaryPage({ portfolios, onSelectPortfolio, lastRefresh
           </span>
         </div>
         <p className="text-xs text-[#8b949e] mt-1">
-          Prices shown are regular-session prices from Marketdata.app&nbsp;&nbsp;
+          Prices shown are the latest regular-session prices in the Railway database&nbsp;&nbsp;
           <span className="text-[#6b7280]">(as of {timeShort})</span>
         </p>
 

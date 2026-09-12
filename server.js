@@ -5,6 +5,11 @@ import { join, resolve } from 'path'
 import { google } from 'googleapis'
 import cron from 'node-cron'
 import {
+  createMarketDataReplica,
+  isAuthorizedIngestRequest,
+  REPLICA_PORTFOLIOS,
+} from './market-data-replica.js'
+import {
   ANALYSIS_PERIODS,
   applyRegularSessionQuotes,
   aggregateHoldingsBySymbol,
@@ -30,6 +35,24 @@ try {
 
 const MARKETDATA_TOKEN = process.env.MARKETDATA_TOKEN
 const MARKETDATA_BASE = 'https://api.marketdata.app/v1'
+const RAILWAY_INGEST_TOKEN = process.env.RAILWAY_INGEST_TOKEN
+const marketDataReplica = createMarketDataReplica({
+  connectionString: process.env.DATABASE_URL,
+})
+const requestedReplicaMode = String(
+  process.env.MARKET_DATA_READ_MODE || (marketDataReplica.configured ? 'prefer-replica' : 'upstream-only')
+).toLowerCase()
+const REPLICA_READ_MODE = ['prefer-replica', 'replica-only', 'upstream-only'].includes(requestedReplicaMode)
+  ? requestedReplicaMode
+  : 'prefer-replica'
+
+function replicaReadsEnabled() {
+  return marketDataReplica.configured && REPLICA_READ_MODE !== 'upstream-only'
+}
+
+function replicaRequired() {
+  return REPLICA_READ_MODE === 'replica-only'
+}
 
 // Google Sheets write client (service account)
 let sheetsClient = null
@@ -52,16 +75,8 @@ try {
       credentials = JSON.parse(json)
       console.log('Google Sheets: using GOOGLE_SERVICE_ACCOUNT_B64')
     } catch (e) {
-      console.warn('GOOGLE_SERVICE_ACCOUNT_B64 parse failed:', e.message, '— trying bundled fallback')
+      console.warn('GOOGLE_SERVICE_ACCOUNT_B64 parse failed:', e.message)
     }
-  }
-
-  // Last resort: use bundled credentials (personal portfolio app)
-  if (!credentials) {
-    const BUNDLED_B64 = 'ewogICJ0eXBlIjogInNlcnZpY2VfYWNjb3VudCIsCiAgInByb2plY3RfaWQiOiAiZ2VuLWxhbmctY2xpZW50LTA1MzMyOTE1MTMiLAogICJwcml2YXRlX2tleV9pZCI6ICJhNzA3NDUzMGU0YmIxODhiMDIzZmU0Mjg1YzQzY2ZmYWQ0YTNhODE3IiwKICAicHJpdmF0ZV9rZXkiOiAiLS0tLS1CRUdJTiBQUklWQVRFIEtFWS0tLS0tXG5NSUlFdkFJQkFEQU5CZ2txaGtpRzl3MEJBUUVGQUFTQ0JLWXdnZ1NpQWdFQUFvSUJBUURxa2dlakRxYmZhODVXXG5LTjF3bCtUbmcxRzg0OVEvK2kySDlwRytic2RZMXgvd0VKU1Q4d2JGZWdlUWNUZ21WSmluUVh3NUVYNHU1QS9QXG5hSjd6T0c0VnYwcnd5bE9NU1czODhrcjhObncveTJBTmF5OWR6Z3k2WFJJN2xkMXJ0QTRmMW53NjE1RzhBOHBoXG5Za3F4Wmh5L3h1bGFWUlNlTkNIclAxNml6RldsV0xyMVV5K2ljOEE1Kzk4UVRKSGpQdEpnazhpYm1HckxtaWJJXG5tby93ZXFqd2JNb1dUTkY2d0tYdDBQako4bk9hYjA2ajUvV1lUM0NVd2FRVEJTNXl3aG9Dc2ZlWCtWQmkrKzVyXG5MbEpENm9NMElkUzF5cmRzbkd5V3ZlZmdXeEpKdHBNRmdsa25yUTUvTG9UU2JJTXJndHRVNXg2NmdLMmU3TEJiXG5IR3R6UW8yZEFnTUJBQUVDZ2dFQUIveVIzTVk4cUo2bVZaT3FEOUdlei90Y1hlM21XelAxbXN1T0hWdGdrRkNpXG5XSlNJMUUxcTFuQWJmbUYyUWdQWUlvUHpIRzc3MzlHZkROcE1qNXlvcERjR3hlZTFwUlNsWnpkczZ5dzgyalV6XG4rL2dXeTJLUXJMVzgzYStBaVRRVUtzL2wvMFJ5Zll5WHRudm1HSmk3Z2I2SkdLekY2djhLMnB0N2Q4bW10ZnJ4XG41NHp5d3duRDBNUWJDU0RHYWc4RndZVkVISkE0R3p1WXR5eWxPbmlHcEhhdkhybWZoTmdzV1RhRmo5ZFpkWEJJXG5HMnV5RWVub254eS8rNWFpTER4MlFKQVNRVWUzdkxuODBMZHRya0xCNXE3V0wvSHZhaG4wNGRyMCtDRUV6bnhIXG5PdGlUdndEMStidDR4amlKTElpN1Z1NFJybHFLbktlSmV3ano3eWRHaHdLQmdRRDJrZkRhMEtWVFRsc0JSNnNoXG5SU1RjL1FoMTc5cVNrMHlaaVJGeU1MN3dvQTM4RmtlMEg5UlRnYXF6Ri80NzlHbDd3anczSmVQRGthTGRCRWRMXG5OR3MrZXZqU3BidGVEWUJlKzRJM1hCbUwwZndlRTJwN0c5UzBTUm0wSFFYMU5BQ292VGxlSUlYWVdta1BIY0RCXG5BWE43aU5vdlNjKzJKUTVyN2RPUHNnQ1RUd0tCZ1FEemlwc05xSjNLcjliY2xZcWtobWVqRjh2ckJhWS9zSm8vXG5BdjYxbytWR3ZGUTRtcm9Dd1VuUW5BU29XMU9LUG9ZK0M0THI0UU5sM2M5L01ZWEJuamRkeXc1aldXSnIzaWtBXG4wNXBxeHp3TzFTMmdGV25teWZjc2ordkN4ZGEyRkMxMGNaaWFaazA0WlpxM2lXdnVkQnVkREltV0FCeklMR1EyXG40eUsvUnhuRlV3S0JnQmh5aS9FR012NDVqS2hwMUx2dHdTUHdLc0NXMFpNcTY3TmxkY2Rlc2UvbHpyMHA4RjRaXG5zZEc5ejVFR1ZmelgxUVdpVXBvZE5hSVVkSk41Y3lBdnlGcGZrd0EvMG40VzFKMldUbWp5eHMyb09sazVENXU1XG5QTFBMYzdMNkZiY2tPdFNBUG9ub3E1eXlDaXluaEk4ZWQ3Yk44T1F6YTFiaUFiWU4xS1l3dmdIZEFvR0FTRDZZXG5xbCtYbDFXOEppbFNQR1lHZmxJRDBzOFZOeFY3WEMvV1FTbkNUTTUzS1dkMHdIWjRJQ0w0R3Iwa3RnREFMODJZXG5ZOEtYRUhQUkpza1pCWXVhbnY4cVlIeFdmdXNqUExTSXZSNG5DYnRoVW5pbnRxZTQ1QVk1aU1qSlhhLzBuL05HXG5zcDZnVDVlTVl0K29IYzlobFovdmZJakNBUHR5S3ZvTUI3UGV5RE1DZ1lBZ1dxZ2d5Y0t5cEZ4VU93TXZ1aFVyXG4rS2lXNTR6MW5PTjRCZzAwVjZRVTNJajVUbFBHUEhVQ0VBNVdwcFgxVVdzK1R3MkNXMktERXc3bXl1TURvUEpWXG5IVkErK3VjYTN1emQrQTlmSDJ2aFRNeVNlNzFKaUszdnlyUzNMb1B5YXhpQWxCZFRIOGNYUlYyMDFDY3NZNC9wXG44WTEwTmtwa25kYjFtRzlKNk9NbEJBPT1cbi0tLS0tRU5EIFBSSVZBVEUgS0VZLS0tLS1cbiIsCiAgImNsaWVudF9lbWFpbCI6ICJwb3J0YW5haHVuZzIwMjZhcHJAZ2VuLWxhbmctY2xpZW50LTA1MzMyOTE1MTMuaWFtLmdzZXJ2aWNlYWNjb3VudC5jb20iLAogICJjbGllbnRfaWQiOiAiMTEyNjkzMjQxMjQ0MDgyODYzNDk4IiwKICAiYXV0aF91cmkiOiAiaHR0cHM6Ly9hY2NvdW50cy5nb29nbGUuY29tL28vb2F1dGgyL2F1dGgiLAogICJ0b2tlbl91cmkiOiAiaHR0cHM6Ly9vYXV0aDIuZ29vZ2xlYXBpcy5jb20vdG9rZW4iLAogICJhdXRoX3Byb3ZpZGVyX3g1MDlfY2VydF91cmwiOiAiaHR0cHM6Ly93d3cuZ29vZ2xlYXBpcy5jb20vb2F1dGgyL3YxL2NlcnRzIiwKICAiY2xpZW50X3g1MDlfY2VydF91cmwiOiAiaHR0cHM6Ly93d3cuZ29vZ2xlYXBpcy5jb20vcm9ib3QvdjEvbWV0YWRhdGEveDUwOS9wb3J0YW5haHVuZzIwMjZhcHIlNDBnZW4tbGFuZy1jbGllbnQtMDUzMzI5MTUxMy5pYW0uZ3NlcnZpY2VhY2NvdW50LmNvbSIsCiAgInVuaXZlcnNlX2RvbWFpbiI6ICJnb29nbGVhcGlzLmNvbSIKfQo='
-    const json = Buffer.from(BUNDLED_B64, 'base64').toString('utf8')
-    credentials = JSON.parse(json)
-    console.log('Google Sheets: using bundled credentials')
   }
 
   if (credentials) {
@@ -83,17 +98,100 @@ const app = express()
 const PORT = process.env.PORT || 3001
 
 app.use(cors())
-app.use(express.json())
+app.use(express.json({ limit: '5mb' }))
 
 // Serve built frontend from dist/
 const distPath = join(process.cwd(), 'dist')
 app.use(express.static(distPath))
 
 /**
+ * POST /api/ingest/market-data
+ * Authenticated Mac collector -> Railway PostgreSQL replication endpoint.
+ * The batch ID is also the idempotency key, so a collector may safely retry.
+ */
+app.post('/api/ingest/market-data', async (req, res) => {
+  if (!marketDataReplica.configured) {
+    return res.status(503).json({ error: 'DATABASE_URL not configured' })
+  }
+  if (!RAILWAY_INGEST_TOKEN) {
+    return res.status(503).json({ error: 'RAILWAY_INGEST_TOKEN not configured' })
+  }
+  if (!isAuthorizedIngestRequest(req.get('authorization'), RAILWAY_INGEST_TOKEN)) {
+    return res.status(401).json({ error: 'Unauthorized' })
+  }
+
+  try {
+    const result = await marketDataReplica.ingest(req.body, {
+      idempotencyKey: req.get('Idempotency-Key') || undefined,
+    })
+    invalidateHoldingsGrowthCache()
+    const payload = result.payload
+    res.set('Cache-Control', 'no-store').json({
+      ok: true,
+      duplicate: result.duplicate,
+      batchId: payload.batchId,
+      accepted: {
+        prices: payload.prices.length,
+        quotes: payload.quotes.length,
+        portfolios: Object.fromEntries(
+          Object.entries(payload.portfolios || {}).map(([key, rows]) => [key, rows.length])
+        ),
+      },
+    })
+  } catch (err) {
+    const status = Number(err.statusCode) || 500
+    if (status >= 500) console.error('Market data ingest failed:', err.message)
+    res.status(status).json({
+      error: status === 400 ? err.message : 'Market data ingest failed',
+      ...(status >= 500 ? { detail: err.message } : {}),
+    })
+  }
+})
+
+/**
+ * GET /api/replica/status
+ * Operational metadata only; never exposes the database URL or ingest token.
+ */
+app.get('/api/replica/status', async (_req, res) => {
+  try {
+    const status = await marketDataReplica.status()
+    res.set('Cache-Control', 'no-store').json({
+      ...status,
+      readMode: REPLICA_READ_MODE,
+    })
+  } catch (err) {
+    res.status(503).json({
+      configured: marketDataReplica.configured,
+      ready: false,
+      readMode: REPLICA_READ_MODE,
+      error: 'Market data replica unavailable',
+      detail: err.message,
+    })
+  }
+})
+
+function publicReplicaQuotes(symbols, result) {
+  return Object.fromEntries(symbols.map(symbol => {
+    const quote = result.quotes[symbol]
+    return [symbol, quote ? {
+      symbol,
+      price: quote.price,
+      dayChangePct: quote.pct,
+      dayChange: quote.change,
+    } : {
+      symbol,
+      price: null,
+      dayChangePct: null,
+      dayChange: null,
+      error: true,
+    }]
+  }))
+}
+
+/**
  * GET /api/quotes?symbols=AAPL,TSLA,GOOG
- * Returns regular-session quote data from marketdata.app. During market hours
- * this is the latest trade versus the previous close; outside market hours it
- * is the latest close versus the close before it.
+ * Reads the latest collector snapshot from PostgreSQL. `prefer-replica` uses
+ * Marketdata.app only as a bootstrap fallback before the first quote ingest.
  */
 app.get('/api/quotes', async (req, res) => {
   const raw = req.query.symbols
@@ -108,6 +206,39 @@ app.get('/api/quotes', async (req, res) => {
 
   if (symbols.length === 0) {
     return res.status(400).json({ error: 'No valid symbols provided' })
+  }
+  if (symbols.length > 500) {
+    return res.status(400).json({ error: 'At most 500 symbols may be requested' })
+  }
+
+  if (replicaReadsEnabled()) {
+    try {
+      const replica = await marketDataReplica.getQuotes(symbols)
+      if (replica.ready) {
+        const retrievedAt = replica.state?.generatedAt || Object.values(replica.quotes)
+          .map(quote => quote.fetchedAt)
+          .filter(Boolean)
+          .sort()
+          .at(-1) || null
+        return res.json({
+          quotes: publicReplicaQuotes(symbols, replica),
+          retrievedAt,
+          source: 'railway-postgres',
+          stale: replica.missingSymbols.length > 0,
+          missingSymbols: replica.missingSymbols,
+        })
+      }
+      if (replicaRequired()) {
+        return res.status(503).json({ error: 'Quote replica has not been seeded' })
+      }
+    } catch (err) {
+      console.error('Quote replica read failed:', err.message)
+      if (replicaRequired()) {
+        return res.status(503).json({ error: 'Quote replica unavailable', detail: err.message })
+      }
+    }
+  } else if (replicaRequired()) {
+    return res.status(503).json({ error: 'DATABASE_URL not configured' })
   }
 
   if (!MARKETDATA_TOKEN) {
@@ -154,15 +285,71 @@ app.get('/api/quotes', async (req, res) => {
       hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true,
     })
 
-    res.json({ quotes, retrievedAt })
+    res.json({ quotes, retrievedAt, source: 'marketdata-bootstrap', stale: false })
   } catch (err) {
     console.error('Quote fetch error:', err)
     res.status(500).json({ error: 'Failed to fetch quotes', detail: err.message })
   }
 })
 
+/**
+ * GET /api/portfolios
+ * Returns every replicated holding joined to its latest quote in one Railway
+ * request. This is the browser startup/focus path; it never contacts Google or
+ * a market-data provider.
+ */
+app.get('/api/portfolios', async (_req, res) => {
+  if (!replicaReadsEnabled()) {
+    return res.status(503).json({ error: 'Railway portfolio replica is not enabled' })
+  }
+
+  try {
+    const holdingsResult = await marketDataReplica.getPortfolios(REPLICA_PORTFOLIOS)
+    if (!holdingsResult.ready) {
+      return res.status(503).json({
+        error: 'Holdings replica has not been seeded',
+        missingPortfolios: holdingsResult.missingPortfolios,
+      })
+    }
+
+    const symbols = [...new Set(
+      Object.values(holdingsResult.portfolios).flat().map(holding => holding.symbol)
+    )]
+    const quoteResult = await marketDataReplica.getQuotes(symbols)
+    const portfolios = Object.fromEntries(REPLICA_PORTFOLIOS.map(portfolio => [
+      portfolio,
+      holdingsResult.portfolios[portfolio].map(holding => {
+        const quote = quoteResult.quotes[holding.symbol]
+        return {
+          ...holding,
+          price: quote?.price ?? null,
+          dayChange: quote?.pct ?? null,
+          quoteSource: quote?.source ?? null,
+          quoteUpdatedAt: quote?.providerUpdatedAt || quote?.fetchedAt || null,
+        }
+      }),
+    ]))
+    const holdingRetrievedAt = Object.values(holdingsResult.states)
+      .map(state => state.generatedAt)
+      .filter(Boolean)
+      .sort()
+      .at(-1) || null
+
+    res.json({
+      portfolios,
+      retrievedAt: quoteResult.state?.generatedAt || holdingRetrievedAt,
+      source: 'railway-postgres',
+      stale: quoteResult.missingSymbols.length > 0,
+      missingSymbols: quoteResult.missingSymbols,
+    })
+  } catch (err) {
+    console.error('Portfolio replica read failed:', err.message)
+    res.status(503).json({ error: 'Portfolio replica unavailable', detail: err.message })
+  }
+})
+
 const SHEET_ID = '1XsHYx1Ifb-y2jX2mssDCB7ICW4YnhEsjWiDi3F3UIdE'
-const PORTFOLIO_KEYS = ['CUB', 'PSC', 'DBS', 'FT']
+const PORTFOLIO_KEYS = [...REPLICA_PORTFOLIOS]
 
 /**
  * GET /api/sheet/:tab
@@ -170,6 +357,32 @@ const PORTFOLIO_KEYS = ['CUB', 'PSC', 'DBS', 'FT']
  */
 app.get('/api/sheet/:tab', async (req, res) => {
   const tab = req.params.tab.toUpperCase()
+  if (!PORTFOLIO_KEYS.includes(tab)) {
+    return res.status(404).json({ error: 'Unknown portfolio tab' })
+  }
+
+  if (replicaReadsEnabled()) {
+    try {
+      const replica = await marketDataReplica.getPortfolios([tab])
+      if (replica.ready) {
+        return res.json({
+          tab,
+          holdings: replica.portfolios[tab],
+          source: 'railway-postgres',
+          retrievedAt: replica.states[tab]?.generatedAt || null,
+        })
+      }
+      if (replicaRequired()) {
+        return res.status(503).json({ error: `${tab} holdings replica has not been seeded` })
+      }
+    } catch (err) {
+      console.error(`Holdings replica read failed for ${tab}:`, err.message)
+      if (replicaRequired()) {
+        return res.status(503).json({ error: 'Holdings replica unavailable', detail: err.message })
+      }
+    }
+  }
+
   const url = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent(tab)}`
   try {
     const response = await fetch(url, {
@@ -198,7 +411,7 @@ app.get('/api/sheet/:tab', async (req, res) => {
       }
     }
     console.log(`Sheet ${tab}: ${holdings.length} holdings, first: ${holdings[0]?.symbol}`)
-    res.json({ tab, holdings })
+    res.json({ tab, holdings, source: 'google-sheets-bootstrap' })
   } catch (err) {
     console.error('Sheet fetch error:', err)
     res.status(500).json({ error: 'Failed to fetch sheet', detail: err.message })
@@ -210,7 +423,29 @@ app.get('/api/sheet/:tab', async (req, res) => {
  * Reads all snapshot rows from the HISTORY sheet tab (newest first).
  */
 app.get('/api/history', async (req, res) => {
-  if (!sheetsClient) return res.json({ entries: [] })
+  if (replicaReadsEnabled()) {
+    try {
+      const replica = await marketDataReplica.getHistory()
+      if (replica.ready) {
+        return res.json({
+          entries: replica.entries,
+          source: 'railway-postgres',
+          retrievedAt: replica.state?.generatedAt || null,
+        })
+      }
+      // In strict mode an empty, not-yet-seeded history is still a valid 200
+      // response and never falls through to Google.
+      if (replicaRequired()) {
+        return res.json({ entries: [], source: 'railway-postgres', stale: true })
+      }
+    } catch (err) {
+      console.error('History replica read failed:', err.message)
+      if (replicaRequired()) {
+        return res.status(503).json({ error: 'History replica unavailable', detail: err.message })
+      }
+    }
+  }
+  if (!sheetsClient) return res.json({ entries: [], source: 'unavailable' })
   try {
     const response = await sheetsClient.spreadsheets.values.get({
       spreadsheetId: SHEET_ID,
@@ -229,9 +464,14 @@ app.get('/api/history', async (req, res) => {
       }))
       .filter(e => e.date)
       .reverse() // newest first
-    res.json({ entries })
+    if (marketDataReplica.configured) {
+      await marketDataReplica.replaceHistory(entries).catch(error => {
+        console.warn('History bootstrap into replica failed:', error.message)
+      })
+    }
+    res.json({ entries, source: 'google-sheets-bootstrap' })
   } catch {
-    res.json({ entries: [] })
+    res.json({ entries: [], source: 'google-sheets-bootstrap' })
   }
 })
 
@@ -240,14 +480,23 @@ app.get('/api/history', async (req, res) => {
  * Clears all snapshot rows from the HISTORY sheet (keeps header).
  */
 app.delete('/api/history', async (_req, res) => {
-  if (!sheetsClient) return res.status(503).json({ error: 'Sheets not configured' })
+  if (!sheetsClient && !marketDataReplica.configured) {
+    return res.status(503).json({ error: 'History storage not configured' })
+  }
   try {
-    await sheetsClient.spreadsheets.values.clear({
-      spreadsheetId: SHEET_ID,
-      range: 'HISTORY!A2:G',
-    })
+    const replicaUpdated = marketDataReplica.configured
+      ? await marketDataReplica.clearHistory()
+      : false
+    let sheetUpdated = false
+    if (sheetsClient) {
+      await sheetsClient.spreadsheets.values.clear({
+        spreadsheetId: SHEET_ID,
+        range: 'HISTORY!A2:G',
+      })
+      sheetUpdated = true
+    }
     console.log('History: cleared all rows')
-    res.json({ ok: true })
+    res.json({ ok: true, replicaUpdated, sheetUpdated })
   } catch (err) {
     res.status(500).json({ error: err.message })
   }
@@ -259,10 +508,20 @@ app.delete('/api/history', async (_req, res) => {
  * Body: { date, time, summary, CUB, PSC, DBS, FT }
  */
 app.post('/api/history', async (req, res) => {
-  if (!sheetsClient) return res.status(503).json({ error: 'Sheets not configured' })
   const { date, time, summary, CUB, PSC, DBS, FT } = req.body
+  if (!sheetsClient && !marketDataReplica.configured) {
+    return res.status(503).json({ error: 'History storage not configured' })
+  }
 
   try {
+    const snapshot = { date, time, summary, CUB, PSC, DBS, FT }
+    const replicaUpdated = marketDataReplica.configured
+      ? await marketDataReplica.upsertHistory(snapshot)
+      : false
+    if (!sheetsClient) {
+      return res.json({ ok: true, replicaUpdated, sheetUpdated: false })
+    }
+
     // Ensure HISTORY sheet exists with a header
     let headerExists = true
     try {
@@ -311,10 +570,10 @@ app.post('/api/history', async (req, res) => {
     }
 
     console.log(`History: saved snapshot for ${date}`)
-    res.json({ ok: true })
+    res.json({ ok: true, replicaUpdated, sheetUpdated: true })
   } catch (err) {
     console.error('History write error:', err.message)
-    res.status(500).json({ error: err.message })
+    res.status(Number(err.statusCode) || 500).json({ error: err.message })
   }
 })
 
@@ -328,6 +587,9 @@ app.post('/api/sheet/:tab', async (req, res) => {
     return res.status(503).json({ error: 'Google Sheets write client not configured' })
   }
   const tab = req.params.tab.toUpperCase()
+  if (!PORTFOLIO_KEYS.includes(tab)) {
+    return res.status(404).json({ error: 'Unknown portfolio tab' })
+  }
   const { holdings } = req.body
   if (!Array.isArray(holdings)) {
     return res.status(400).json({ error: 'holdings array required' })
@@ -351,7 +613,22 @@ app.post('/api/sheet/:tab', async (req, res) => {
     }
 
     console.log(`Sheet ${tab}: wrote ${holdings.length} holdings`)
-    res.json({ ok: true, tab, count: holdings.length })
+    let replicaUpdated = false
+    if (marketDataReplica.configured) {
+      try {
+        replicaUpdated = await marketDataReplica.replacePortfolio(tab, holdings)
+        invalidateHoldingsGrowthCache()
+      } catch (replicaError) {
+        console.error(`Sheet ${tab}: Google write succeeded but replica update failed:`, replicaError.message)
+        return res.status(500).json({
+          error: 'Google Sheet updated, but Railway replica update failed',
+          detail: replicaError.message,
+          sheetUpdated: true,
+          replicaUpdated: false,
+        })
+      }
+    }
+    res.json({ ok: true, tab, count: holdings.length, replicaUpdated })
   } catch (err) {
     console.error('Sheet write error:', err.message)
     res.status(500).json({ error: 'Failed to write to sheet', detail: err.message })
@@ -363,30 +640,34 @@ app.post('/api/sheet/:tab', async (req, res) => {
  * Shows whether key env vars are present (never reveals actual values).
  */
 app.get('/api/env-check', (_req, res) => {
-  const BUILD_VER = 'v5-bundled'
+  const BUILD_VER = 'v6-railway-replica'
   const email  = process.env.GOOGLE_CLIENT_EMAIL  || ''
   const key    = process.env.GOOGLE_PRIVATE_KEY    || ''
   const token  = process.env.MARKETDATA_TOKEN      || ''
   const b64    = process.env.GOOGLE_SERVICE_ACCOUNT_B64 || ''
+  const databaseUrl = process.env.DATABASE_URL || ''
+  const ingestToken = process.env.RAILWAY_INGEST_TOKEN || ''
 
-  let b64Status = '✗ MISSING'
+  let b64Valid = false
   if (b64) {
     try {
       const decoded = Buffer.from(b64, 'base64').toString('utf8')
-      const parsed  = JSON.parse(decoded)
-      b64Status = `✓ set & valid JSON (${b64.length} b64 chars, email: ${parsed.client_email})`
-    } catch (e) {
-      b64Status = `✗ set (${b64.length} b64 chars) but JSON parse failed: ${e.message}`
-    }
+      const parsed = JSON.parse(decoded)
+      b64Valid = Boolean(parsed?.client_email && parsed?.private_key)
+    } catch { /* malformed credential; expose only the boolean result */ }
   }
 
   res.json({
-    GOOGLE_SERVICE_ACCOUNT_B64: b64Status,
-    GOOGLE_CLIENT_EMAIL:  email  ? `✓ set (${email.length} chars, starts: ${email.slice(0,12)}…)` : '✗ MISSING',
-    GOOGLE_PRIVATE_KEY:   key    ? `✓ set (${key.length} chars, starts: ${key.slice(0,30)}…)` : '✗ MISSING',
-    MARKETDATA_TOKEN:     token  ? `✓ set (${token.length} chars)` : '✗ MISSING',
+    GOOGLE_SERVICE_ACCOUNT_B64: { configured: Boolean(b64), valid: b64Valid },
+    GOOGLE_CLIENT_EMAIL:  { configured: Boolean(email) },
+    GOOGLE_PRIVATE_KEY:   { configured: Boolean(key) },
+    MARKETDATA_TOKEN:     { configured: Boolean(token) },
+    DATABASE_URL:         { configured: Boolean(databaseUrl) },
+    RAILWAY_INGEST_TOKEN: { configured: Boolean(ingestToken) },
+    MARKET_DATA_READ_MODE: REPLICA_READ_MODE,
+    marketDataReplicaConfigured: marketDataReplica.configured,
     sheetsClientReady:    !!sheetsClient,
-    sheetsInitError:      sheetsInitError || null,
+    sheetsInitFailed:     Boolean(sheetsInitError),
     NODE_ENV:             process.env.NODE_ENV || '(not set)',
     BUILD_VER,
   })
@@ -420,9 +701,58 @@ async function fetchHoldingsFromSheet(tab, signal) {
   return holdings
 }
 
+async function loadAllPortfolioHoldings() {
+  if (replicaReadsEnabled()) {
+    try {
+      const replica = await marketDataReplica.getPortfolios(PORTFOLIO_KEYS)
+      if (replica.ready) {
+        return {
+          portfolios: replica.portfolios,
+          source: 'railway-postgres',
+          version: PORTFOLIO_KEYS
+            .map(key => replica.states[key]?.generatedAt || '')
+            .sort()
+            .at(-1) || '',
+        }
+      }
+      if (replicaRequired()) {
+        throw Object.assign(
+          new Error(`Holdings replica missing: ${replica.missingPortfolios.join(', ')}`),
+          { statusCode: 503 }
+        )
+      }
+    } catch (error) {
+      if (replicaRequired() || error.statusCode === 503) throw error
+      console.warn('Holdings replica unavailable; using Google bootstrap:', error.message)
+    }
+  } else if (replicaRequired()) {
+    throw Object.assign(new Error('DATABASE_URL not configured'), { statusCode: 503 })
+  }
+
+  const sheetController = new AbortController()
+  const sheetTimeout = setTimeout(() => sheetController.abort(), 10000)
+  try {
+    const entries = await Promise.all(
+      PORTFOLIO_KEYS.map(async key => [key, await fetchHoldingsFromSheet(key, sheetController.signal)])
+    )
+    return {
+      portfolios: Object.fromEntries(entries),
+      source: 'google-sheets-bootstrap',
+      version: '',
+    }
+  } finally {
+    clearTimeout(sheetTimeout)
+  }
+}
+
 const GROWTH_CACHE_MS = 15 * 60 * 1000
 let holdingsGrowthCache = { key: '', expiresAt: 0, payload: null }
 const holdingsGrowthInFlight = new Map()
+
+function invalidateHoldingsGrowthCache() {
+  holdingsGrowthCache = { key: '', expiresAt: 0, payload: null }
+  holdingsGrowthInFlight.clear()
+}
 
 async function mapWithConcurrency(items, limit, mapper) {
   const results = new Array(items.length)
@@ -517,7 +847,77 @@ async function fetchRegularSessionQuotes(symbols) {
   }
 }
 
-async function buildHoldingsGrowthPayload(aggregated) {
+function assembleHoldingsGrowthPayload({
+  aggregated,
+  histories,
+  rawHistories = histories,
+  fetchErrors = new Map(),
+  retrievedAt = new Date().toISOString(),
+  dataSource,
+}) {
+  const successfulHistories = [...histories.entries()]
+    .filter(([, candles]) => candles.length > 0)
+    .sort(([, a], [, b]) => b.length - a.length)
+  const canonicalEntry = histories.get('SPY')?.length
+    ? ['SPY', histories.get('SPY')]
+    : successfulHistories[0] || [null, []]
+  const [canonicalSymbol, canonicalCandles] = canonicalEntry
+  const rawCanonicalCandles = canonicalSymbol
+    ? rawHistories.get(canonicalSymbol) || []
+    : []
+  const canonicalLatest = canonicalCandles.at(-1) || null
+  const rawCanonicalLatest = rawCanonicalCandles.at(-1) || null
+  const expectedNextSessionDate = rawCanonicalLatest?.date > canonicalLatest?.date
+    ? rawCanonicalLatest.date
+    : null
+  const errors = []
+  const chartDates = canonicalCandles.map(candle => candle.date)
+  const alignCloses = candles => {
+    const byDate = new Map(candles.map(candle => [candle.date, candle.close]))
+    return chartDates.map(date => byDate.get(date) ?? null)
+  }
+  const holdings = aggregated.map(holding => {
+    const message = fetchErrors.get(holding.symbol)
+    if (message) errors.push({ symbol: holding.symbol, message })
+    const row = calculateHoldingGrowth(
+      holding,
+      histories.get(holding.symbol) || [],
+      canonicalCandles
+    )
+    const withChartCloses = {
+      ...row,
+      chartCloses: alignCloses(histories.get(holding.symbol) || []),
+    }
+    return message ? { ...withChartCloses, error: message } : withChartCloses
+  })
+
+  return {
+    periods: ANALYSIS_PERIODS,
+    asOf: canonicalLatest?.date || null,
+    baselineDates: Object.fromEntries(
+      ANALYSIS_PERIODS.map(period => [period, canonicalCandles.at(-1 - period)?.date || null])
+    ),
+    nextSessionBaselineDates: Object.fromEntries(
+      ANALYSIS_PERIODS.map(period => [period, canonicalCandles.at(-period)?.date || null])
+    ),
+    canonicalSymbol,
+    canonicalLastClose: canonicalLatest?.close ?? null,
+    expectedNextSessionDate,
+    chartDates,
+    benchmarkCloses: {
+      SPY: alignCloses(histories.get('SPY') || []),
+      QQQ: alignCloses(histories.get('QQQ') || []),
+    },
+    holdings,
+    aggregate: calculateGrowthAggregate(holdings),
+    errors,
+    retrievedAt,
+    cached: false,
+    dataSource,
+  }
+}
+
+async function buildUpstreamHoldingsGrowthPayload(aggregated) {
   const controller = new AbortController()
   const deadline = setTimeout(() => controller.abort(), 35000)
 
@@ -542,68 +942,74 @@ async function buildHoldingsGrowthPayload(aggregated) {
       }
     })
 
-    const successfulHistories = [...histories.entries()]
-      .filter(([, candles]) => candles.length > 0)
-      .sort(([, a], [, b]) => b.length - a.length)
-    const canonicalEntry = histories.get('SPY')?.length
-      ? ['SPY', histories.get('SPY')]
-      : successfulHistories[0] || [null, []]
-    const [canonicalSymbol, canonicalCandles] = canonicalEntry
-    const rawCanonicalCandles = canonicalSymbol
-      ? rawHistories.get(canonicalSymbol) || []
-      : []
-    const canonicalLatest = canonicalCandles.at(-1) || null
-    const rawCanonicalLatest = rawCanonicalCandles.at(-1) || null
-    const expectedNextSessionDate = rawCanonicalLatest?.date > canonicalLatest?.date
-      ? rawCanonicalLatest.date
-      : null
-    const errors = []
-    const chartDates = canonicalCandles.map(candle => candle.date)
-    const alignCloses = candles => {
-      const byDate = new Map(candles.map(candle => [candle.date, candle.close]))
-      return chartDates.map(date => byDate.get(date) ?? null)
-    }
-    const holdings = aggregated.map(holding => {
-      const message = fetchErrors.get(holding.symbol)
-      if (message) errors.push({ symbol: holding.symbol, message })
-      const row = calculateHoldingGrowth(
-        holding,
-        histories.get(holding.symbol) || [],
-        canonicalCandles
-      )
-      const withChartCloses = {
-        ...row,
-        chartCloses: alignCloses(histories.get(holding.symbol) || []),
-      }
-      return message ? { ...withChartCloses, error: message } : withChartCloses
-    })
-
-    return {
-      periods: ANALYSIS_PERIODS,
-      asOf: canonicalLatest?.date || null,
-      baselineDates: Object.fromEntries(
-        ANALYSIS_PERIODS.map(period => [period, canonicalCandles.at(-1 - period)?.date || null])
-      ),
-      nextSessionBaselineDates: Object.fromEntries(
-        ANALYSIS_PERIODS.map(period => [period, canonicalCandles.at(-period)?.date || null])
-      ),
-      canonicalSymbol,
-      canonicalLastClose: canonicalLatest?.close ?? null,
-      expectedNextSessionDate,
-      chartDates,
-      benchmarkCloses: {
-        SPY: alignCloses(histories.get('SPY') || []),
-        QQQ: alignCloses(histories.get('QQQ') || []),
-      },
-      holdings,
-      aggregate: calculateGrowthAggregate(holdings),
-      errors,
+    return assembleHoldingsGrowthPayload({
+      aggregated,
+      histories,
+      rawHistories,
+      fetchErrors,
       retrievedAt: new Date().toISOString(),
-      cached: false,
-    }
+      dataSource: 'marketdata-bootstrap',
+    })
   } finally {
     clearTimeout(deadline)
   }
+}
+
+async function buildReplicaHoldingsGrowthPayload(aggregated) {
+  const historySymbols = [...new Set(['SPY', 'QQQ', ...aggregated.map(holding => holding.symbol)])]
+  const result = await marketDataReplica.getDailyCandles(historySymbols, 62)
+  if (!result.ready) return null
+  const fetchErrors = new Map(
+    result.missingSymbols.map(symbol => [symbol, 'Price history unavailable in Railway replica'])
+  )
+  return assembleHoldingsGrowthPayload({
+    aggregated,
+    histories: result.histories,
+    fetchErrors,
+    retrievedAt: result.state?.generatedAt || new Date().toISOString(),
+    dataSource: 'railway-postgres',
+  })
+}
+
+async function loadRegularSessionQuotes(symbols) {
+  const uniqueSymbols = [...new Set(['SPY', 'QQQ', ...symbols])]
+  if (replicaReadsEnabled()) {
+    try {
+      const result = await marketDataReplica.getQuotes(uniqueSymbols)
+      if (result.ready) {
+        const canonicalSessionDate = result.quotes.SPY?.sessionDate || Object.values(result.quotes)
+          .map(quote => quote.sessionDate)
+          .filter(Boolean)
+          .sort()
+          .at(-1) || null
+        return {
+          value: {
+            quotes: result.quotes,
+            canonicalSessionDate,
+            retrievedAt: result.state?.generatedAt || null,
+          },
+          error: result.missingSymbols.length > 0
+            ? new Error(`Quote replica missing ${result.missingSymbols.length} symbol(s)`)
+            : null,
+          source: 'railway-postgres',
+        }
+      }
+      if (replicaRequired()) {
+        return { value: null, error: new Error('Quote replica has not been seeded'), source: 'railway-postgres' }
+      }
+    } catch (error) {
+      if (replicaRequired()) return { value: null, error, source: 'railway-postgres' }
+      console.warn('Quote replica unavailable; using Marketdata bootstrap:', error.message)
+    }
+  }
+
+  if (!MARKETDATA_TOKEN) {
+    return { value: null, error: new Error('MARKETDATA_TOKEN not configured'), source: null }
+  }
+  return fetchRegularSessionQuotes(symbols).then(
+    value => ({ value, error: null, source: 'marketdata-bootstrap' }),
+    error => ({ value: null, error, source: 'marketdata-bootstrap' })
+  )
 }
 
 /**
@@ -612,24 +1018,49 @@ async function buildHoldingsGrowthPayload(aggregated) {
  * growth over the previous 1, 3, 10, 20 and 60 trading sessions.
  */
 app.get('/api/holdings/growth', async (_req, res) => {
-  if (!MARKETDATA_TOKEN) {
-    return res.status(500).json({ error: 'MARKETDATA_TOKEN not configured' })
-  }
-
   try {
-    const sheetController = new AbortController()
-    const sheetTimeout = setTimeout(() => sheetController.abort(), 10000)
-    const portfolioEntries = await Promise.all(
-      PORTFOLIO_KEYS.map(async key => [key, await fetchHoldingsFromSheet(key, sheetController.signal)])
-    ).finally(() => clearTimeout(sheetTimeout))
-    const aggregated = aggregateHoldingsBySymbol(Object.fromEntries(portfolioEntries))
-    const cacheKey = aggregated.map(holding => `${holding.symbol}:${holding.shares}`).join('|')
-    const quoteOutcomePromise = fetchRegularSessionQuotes(
-      aggregated.map(holding => holding.symbol)
-    ).then(
-      value => ({ value, error: null }),
-      error => ({ value: null, error })
-    )
+    const holdingsSnapshot = await loadAllPortfolioHoldings()
+    const aggregated = aggregateHoldingsBySymbol(holdingsSnapshot.portfolios)
+    const symbols = aggregated.map(holding => holding.symbol)
+    const quoteOutcomePromise = loadRegularSessionQuotes(symbols)
+
+    let historicalBuilder = null
+    let historicalSource = 'marketdata-bootstrap'
+    let priceVersion = ''
+    if (replicaReadsEnabled()) {
+      try {
+        const priceState = await marketDataReplica.getDatasetState('prices')
+        if (priceState) {
+          historicalBuilder = () => buildReplicaHoldingsGrowthPayload(aggregated)
+          historicalSource = 'railway-postgres'
+          priceVersion = priceState.generatedAt
+        } else if (replicaRequired()) {
+          throw Object.assign(new Error('Price history replica has not been seeded'), { statusCode: 503 })
+        }
+      } catch (error) {
+        if (replicaRequired() || error.statusCode === 503) throw error
+        console.warn('Price replica unavailable; using Marketdata bootstrap:', error.message)
+      }
+    } else if (replicaRequired()) {
+      throw Object.assign(new Error('DATABASE_URL not configured'), { statusCode: 503 })
+    }
+
+    if (!historicalBuilder) {
+      if (!MARKETDATA_TOKEN) {
+        throw Object.assign(new Error('MARKETDATA_TOKEN not configured and price replica is not seeded'), {
+          statusCode: 503,
+        })
+      }
+      historicalBuilder = () => buildUpstreamHoldingsGrowthPayload(aggregated)
+    }
+
+    const cacheKey = [
+      historicalSource,
+      priceVersion,
+      holdingsSnapshot.source,
+      holdingsSnapshot.version,
+      ...aggregated.map(holding => `${holding.symbol}:${holding.shares}`),
+    ].join('|')
 
     let historicalPayload
     let cacheHit = false
@@ -643,12 +1074,15 @@ app.get('/api/holdings/growth', async (_req, res) => {
       cacheHit = true
     } else {
       if (!holdingsGrowthInFlight.has(cacheKey)) {
-        const pending = buildHoldingsGrowthPayload(aggregated)
+        const pending = historicalBuilder()
           .finally(() => holdingsGrowthInFlight.delete(cacheKey))
         holdingsGrowthInFlight.set(cacheKey, pending)
       }
 
       historicalPayload = await holdingsGrowthInFlight.get(cacheKey)
+      if (!historicalPayload) {
+        throw Object.assign(new Error('Price history replica has not been seeded'), { statusCode: 503 })
+      }
       holdingsGrowthCache = {
         key: cacheKey,
         expiresAt: Date.now() + GROWTH_CACHE_MS,
@@ -695,10 +1129,15 @@ app.get('/api/holdings/growth', async (_req, res) => {
       avc,
       cached: cacheHit,
       quoteError: quoteOutcome.error?.message || null,
+      holdingsSource: holdingsSnapshot.source,
+      quoteSource: quoteOutcome.source,
     })
   } catch (err) {
     console.error('Holdings growth error:', err.message)
-    res.status(500).json({ error: 'Failed to calculate holdings growth', detail: err.message })
+    res.status(Number(err.statusCode) || 500).json({
+      error: 'Failed to calculate holdings growth',
+      detail: err.message,
+    })
   }
 })
 
@@ -724,6 +1163,26 @@ async function fetchLivePrices(symbols) {
   return prices
 }
 
+async function loadSnapshotPrices(symbols) {
+  if (replicaReadsEnabled()) {
+    try {
+      const replica = await marketDataReplica.getQuotes(symbols)
+      if (replica.ready) {
+        return Object.fromEntries(
+          Object.entries(replica.quotes).map(([symbol, quote]) => [symbol, quote.price])
+        )
+      }
+      if (replicaRequired()) {
+        throw new Error('Quote replica has not been seeded')
+      }
+    } catch (error) {
+      if (replicaRequired()) throw error
+      console.warn('Snapshot quote replica unavailable; using Marketdata bootstrap:', error.message)
+    }
+  }
+  return fetchLivePrices(symbols)
+}
+
 /**
  * Main daily snapshot function — fetches all portfolios, gets live prices,
  * calculates market values, and writes to the HISTORY sheet.
@@ -731,15 +1190,13 @@ async function fetchLivePrices(symbols) {
 async function runDailySnapshot() {
   console.log('Daily snapshot: starting…')
   try {
-    // 1. Load all portfolio holdings from Google Sheets tabs
-    const allHoldings = {}
-    for (const key of PORTFOLIO_KEYS) {
-      allHoldings[key] = await fetchHoldingsFromSheet(key)
-    }
+    // 1. Load replicated holdings (Google is bootstrap-only until first sync).
+    const holdingsSnapshot = await loadAllPortfolioHoldings()
+    const allHoldings = holdingsSnapshot.portfolios
 
-    // 2. Fetch live prices for all unique symbols
+    // 2. Read the latest collector quotes from PostgreSQL.
     const allSymbols = [...new Set(Object.values(allHoldings).flat().map(h => h.symbol))]
-    const prices = await fetchLivePrices(allSymbols)
+    const prices = await loadSnapshotPrices(allSymbols)
 
     // 3. Calculate market values
     const mv = {}
@@ -754,8 +1211,23 @@ async function runDailySnapshot() {
     const dateStr = now.toLocaleDateString('sv-SE', { timeZone: 'Asia/Taipei' }) // "2026-04-25"
     const timeStr = now.toLocaleString('en-US', { timeZone: 'Asia/Taipei', hour: '2-digit', minute: '2-digit', hour12: true })
 
-    // 5. Save to HISTORY sheet (reuse existing upsert logic)
-    if (!sheetsClient) throw new Error('Sheets client not ready')
+    // 5. PostgreSQL is the serving copy; Google remains a backup write.
+    if (marketDataReplica.configured) {
+      await marketDataReplica.upsertHistory({
+        date: dateStr,
+        time: timeStr,
+        summary: total,
+        CUB: mv.CUB,
+        PSC: mv.PSC,
+        DBS: mv.DBS,
+        FT: mv.FT,
+      })
+    }
+    if (!sheetsClient) {
+      if (!marketDataReplica.configured) throw new Error('History storage not configured')
+      console.log(`Daily snapshot: ✓ saved to Railway replica for ${dateStr} ${timeStr}`)
+      return
+    }
 
     // Ensure header exists
     try { await sheetsClient.spreadsheets.values.get({ spreadsheetId: SHEET_ID, range: 'HISTORY!A1' }) }
@@ -797,7 +1269,13 @@ async function runDailySnapshot() {
  * POST /api/snapshot/run
  * Manual trigger for the daily snapshot (for testing).
  */
-app.post('/api/snapshot/run', async (_req, res) => {
+app.post('/api/snapshot/run', async (req, res) => {
+  if (!RAILWAY_INGEST_TOKEN) {
+    return res.status(503).json({ error: 'Manual snapshot authentication is not configured' })
+  }
+  if (!isAuthorizedIngestRequest(req.get('authorization'), RAILWAY_INGEST_TOKEN)) {
+    return res.status(401).json({ error: 'Unauthorized' })
+  }
   try {
     await runDailySnapshot()
     res.json({ ok: true })
@@ -820,9 +1298,16 @@ app.get('*', (_req, res) => {
 cron.schedule('0 6 * * 1-5', runDailySnapshot, { timezone: 'Asia/Taipei' })
 console.log('Daily snapshot cron: scheduled at 06:00 Asia/Taipei, Mon–Fri')
 
+if (marketDataReplica.configured) {
+  marketDataReplica.init().catch(error => {
+    console.error('Market data replica initialization failed:', error.message)
+  })
+}
+
 app.listen(PORT, () => {
   console.log(`App running at http://localhost:${PORT}`)
   console.log(`Using marketdata.app token: ${MARKETDATA_TOKEN ? '✓ loaded' : '✗ MISSING'}`)
+  console.log(`Market data replica: ${marketDataReplica.configured ? `✓ ${REPLICA_READ_MODE}` : '✗ DATABASE_URL missing'}`)
   const keys = Object.keys(process.env).sort()
   console.log(`ENV KEYS (${keys.length} total):`, keys.join(', '))
 })

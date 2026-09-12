@@ -1,0 +1,3 @@
+# yfinance supplies Yahoo's split-adjusted, non-dividend Close history when
+# auto_adjust=False. pandas/numpy are installed transitively by yfinance.
+yfinance>=0.2.66,<1

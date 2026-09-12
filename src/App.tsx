@@ -2,8 +2,12 @@ import React, { useState, useCallback, useEffect, useRef } from 'react'
 import { Holding, PortfolioKey, PortfolioStats } from './types'
 import SummaryPage from './components/SummaryPage'
 import PortfolioPage from './components/PortfolioPage'
-import { loadAllPortfoliosFromSheet, writePortfolioToSheet } from './services/sheets'
-import { fetchQuotes } from './services/quotes'
+import {
+  loadAllPortfoliosFromReplica,
+  loadAllPortfoliosFromSheet,
+  writePortfolioToSheet,
+} from './services/sheets'
+import { fetchQuoteSnapshot } from './services/quotes'
 import { saveSnapshot } from './services/history'
 
 const PORTFOLIO_KEYS: PortfolioKey[] = ['CUB', 'PSC', 'DBS', 'FT']
@@ -119,6 +123,19 @@ function savePortfolios(portfolios: Record<PortfolioKey, Holding[]>) {
   } catch { /* ignore */ }
 }
 
+function formatReplicaTime(value: string | null): string {
+  if (!value) return new Date().toLocaleString('en-US', {
+    month: 'short', day: '2-digit', year: 'numeric',
+    hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true,
+  })
+  const parsed = new Date(value)
+  if (Number.isNaN(parsed.getTime())) return value
+  return parsed.toLocaleString('en-US', {
+    month: 'short', day: '2-digit', year: 'numeric',
+    hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true,
+  })
+}
+
 export function calcStats(holdings: Holding[]): PortfolioStats {
   let totalMarketValue = 0
   let totalCostBasis = 0
@@ -157,6 +174,32 @@ export default function App() {
 
   const syncFromSheet = useCallback(async (showStatus = true) => {
     const cached = loadPortfolios()
+    const replicaSnapshot = await loadAllPortfoliosFromReplica(PORTFOLIO_KEYS)
+    if (replicaSnapshot) {
+      const replicated = { ...cached }
+      for (const key of PORTFOLIO_KEYS) {
+        if (replicaSnapshot.portfolios[key]) {
+          const cachedBySymbol = new Map(cached[key].map(holding => [holding.symbol, holding]))
+          replicated[key] = (replicaSnapshot.portfolios[key] as Holding[]).map(holding => {
+            if (holding.price > 0) return holding
+            const previous = cachedBySymbol.get(holding.symbol)
+            return previous
+              ? { ...holding, price: previous.price, dayChange: previous.dayChange }
+              : holding
+          })
+        }
+      }
+      setPortfolios(replicated)
+      savePortfolios(replicated)
+      setLastRefreshed(formatReplicaTime(replicaSnapshot.retrievedAt))
+      if (showStatus) setSheetStatus(replicaSnapshot.stale
+        ? 'Loaded last-known prices from Railway database'
+        : 'Loaded from Railway database')
+      return replicated
+    }
+
+    // Compatibility bootstrap for a deployment whose replica has not yet been
+    // seeded. Production switches to the single Railway endpoint above.
     const sheetData = await loadAllPortfoliosFromSheet(PORTFOLIO_KEYS)
     const merged = { ...cached }
     let updated = 0
@@ -171,7 +214,8 @@ export default function App() {
     if (updated > 0) {
       const allSymbols = PORTFOLIO_KEYS.flatMap(key => merged[key].map(h => h.symbol))
       const uniqueSymbols = [...new Set(allSymbols)]
-      const quotes = await fetchQuotes(uniqueSymbols)
+      const snapshot = await fetchQuoteSnapshot(uniqueSymbols)
+      const quotes = snapshot.quotes
 
       for (const key of PORTFOLIO_KEYS) {
         merged[key] = merged[key].map(h => {
@@ -183,12 +227,10 @@ export default function App() {
 
       setPortfolios(merged)
       savePortfolios(merged)
-      const ts = new Date().toLocaleString('en-US', {
-        month: 'short', day: '2-digit', year: 'numeric',
-        hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true,
-      })
-      setLastRefreshed(ts)
-      if (showStatus) setSheetStatus('Synced from Google Sheets + Marketdata.app')
+      setLastRefreshed(formatReplicaTime(snapshot.retrievedAt))
+      if (showStatus) setSheetStatus(snapshot.stale
+        ? 'Loaded last-known prices from Railway database'
+        : 'Loaded from Railway database')
     } else if (showStatus) {
       setSheetStatus('Using cached data')
     }
@@ -196,7 +238,7 @@ export default function App() {
     return merged
   }, [])
 
-  // On startup: load from Google Sheets
+  // On startup: load the Railway database snapshot.
   useEffect(() => {
     setSheetLoading(true)
     syncFromSheet(true).then(() => {
@@ -209,7 +251,7 @@ export default function App() {
     })
   }, [])
 
-  // Re-sync from Sheet when window regains focus (cross-device sync)
+  // Re-sync from Railway when the window regains focus.
   useEffect(() => {
     const onFocus = () => {
       syncFromSheet(false).catch((err: any) => {
@@ -249,7 +291,8 @@ export default function App() {
   const handleRefreshAll = useCallback(async () => {
     const allSymbols = PORTFOLIO_KEYS.flatMap(key => portfolios[key].map(h => h.symbol))
     const uniqueSymbols = [...new Set(allSymbols)]
-    const quotes = await fetchQuotes(uniqueSymbols)
+    const snapshot = await fetchQuoteSnapshot(uniqueSymbols)
+    const quotes = snapshot.quotes
     const updated = { ...portfolios }
     for (const key of PORTFOLIO_KEYS) {
       updated[key] = portfolios[key].map(h => {
@@ -260,11 +303,7 @@ export default function App() {
     }
     setPortfolios(updated)
     savePortfolios(updated)
-    const ts = new Date().toLocaleString('en-US', {
-      month: 'short', day: '2-digit', year: 'numeric',
-      hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true,
-    })
-    setLastRefreshed(ts)
+    setLastRefreshed(formatReplicaTime(snapshot.retrievedAt))
     await saveSnapshot({
       summary: calcStats(Object.values(updated).flat()).totalMarketValue,
       CUB: calcStats(updated.CUB).totalMarketValue,

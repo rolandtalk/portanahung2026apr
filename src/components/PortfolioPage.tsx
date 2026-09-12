@@ -1,7 +1,7 @@
 import React, { useState, useCallback } from 'react'
 import { Holding, PortfolioKey } from '../types'
 import { calcStats } from '../App'
-import { fetchQuotes } from '../services/quotes'
+import { fetchQuoteSnapshot } from '../services/quotes'
 import ProductionDomainRemark from './ProductionDomainRemark'
 
 interface Props {
@@ -40,7 +40,8 @@ export default function PortfolioPage({ portfolioKey, holdings, onUpdateHoldings
     setRefreshError(null)
     try {
       const symbols = holdings.map(h => h.symbol)
-      const quotes = await fetchQuotes(symbols)
+      const snapshot = await fetchQuoteSnapshot(symbols)
+      const quotes = snapshot.quotes
       const updated = holdings.map(h => {
         const q = quotes[h.symbol]
         if (!q || q.error || q.price === null) return h
@@ -52,7 +53,8 @@ export default function PortfolioPage({ portfolioKey, holdings, onUpdateHoldings
       })
       onUpdateHoldings(updated)
       onSave()
-      const ts = new Date().toLocaleString('en-US', {
+      const retrieved = snapshot.retrievedAt ? new Date(snapshot.retrievedAt) : new Date()
+      const ts = (Number.isNaN(retrieved.getTime()) ? new Date() : retrieved).toLocaleString('en-US', {
         month: 'short', day: '2-digit', year: 'numeric',
         hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true,
       })
@@ -136,7 +138,7 @@ export default function PortfolioPage({ portfolioKey, holdings, onUpdateHoldings
           </span>
         </div>
         <p className="text-xs text-[#8b949e] mt-1">
-          Prices shown are regular-session prices from Marketdata.app&nbsp;&nbsp;
+          Prices shown are the latest regular-session prices in the Railway database&nbsp;&nbsp;
           <span className="text-[#6b7280]">(as of {timeShort})</span>
         </p>
       </div>

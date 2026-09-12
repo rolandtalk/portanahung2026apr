@@ -1,6 +1,41 @@
 import { Holding, PortfolioKey } from '../types'
 import { API_BASE } from './apiBase'
 
+export interface PortfolioReplicaSnapshot {
+  portfolios: Partial<Record<PortfolioKey, Holding[]>>
+  retrievedAt: string | null
+  stale: boolean
+}
+
+export async function loadAllPortfoliosFromReplica(
+  keys: PortfolioKey[]
+): Promise<PortfolioReplicaSnapshot | null> {
+  try {
+    const res = await fetch(`${API_BASE}/api/portfolios`)
+    if (!res.ok) return null
+    const data = await res.json()
+    const portfolios: Partial<Record<PortfolioKey, Holding[]>> = {}
+    for (const key of keys) {
+      const rows = data.portfolios?.[key]
+      if (!Array.isArray(rows)) return null
+      portfolios[key] = rows.map((row: any) => ({
+        symbol: String(row.symbol || '').toUpperCase(),
+        shares: Number(row.shares),
+        cost: Number(row.cost),
+        price: row.price == null ? 0 : Number(row.price),
+        dayChange: row.dayChange == null ? 0 : Number(row.dayChange),
+      })).filter(row => row.symbol && Number.isFinite(row.shares) && Number.isFinite(row.cost))
+    }
+    return {
+      portfolios,
+      retrievedAt: typeof data.retrievedAt === 'string' ? data.retrievedAt : null,
+      stale: data.stale === true,
+    }
+  } catch {
+    return null
+  }
+}
+
 export async function loadPortfolioFromSheet(tab: PortfolioKey): Promise<Holding[] | null> {
   try {
     const res = await fetch(`${API_BASE}/api/sheet/${tab}`)
