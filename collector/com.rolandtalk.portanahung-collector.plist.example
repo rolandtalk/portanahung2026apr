@@ -8,15 +8,20 @@
   <array>
     <string>/opt/homebrew/bin/railway</string>
     <string>run</string>
+    <string>--project</string>
+    <string>__RAILWAY_PROJECT_ID__</string>
+    <string>--environment</string>
+    <string>production</string>
     <string>--service</string>
     <string>portanahunggoogsheet</string>
-    <string>__REPOSITORY_PATH__/.venv-collector/bin/python</string>
+    <string>--no-local</string>
+    <string>__RUNTIME_PATH__/.venv/bin/python</string>
     <string>-m</string>
     <string>collector.cli</string>
     <string>scheduled</string>
   </array>
   <key>WorkingDirectory</key>
-  <string>__REPOSITORY_PATH__</string>
+  <string>__RUNTIME_PATH__</string>
   <key>EnvironmentVariables</key>
   <dict>
     <key>HOME</key>

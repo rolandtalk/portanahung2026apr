@@ -33,6 +33,10 @@ python3 -m venv .venv-collector
 .venv-collector/bin/pip install -r collector/requirements.txt
 ```
 
+The collector requires Python 3.11 or newer. The macOS runtime installer uses
+Homebrew Python at `/opt/homebrew/bin/python3` rather than Apple's older system
+Python.
+
 The installed launchd job uses `railway run`, so this Mac reads the existing
 `MARKETDATA_TOKEN` and `RAILWAY_INGEST_TOKEN` from Railway without keeping a
 second plaintext copy. Confirm `railway status` identifies the
@@ -67,10 +71,20 @@ For a harmless provider test, pass an explicit small symbol set to `history`,
 
 ## Scheduling on macOS
 
-Use the included launchd plist as a template. Replace `__REPOSITORY_PATH__` with
-this checkout's absolute path, `__HOME_PATH__` with the user's absolute home
-directory (launchd does not provide `HOME` by default), and `__LOG_PATH__` with
-a writable log directory, then save it as:
+First install a small collector-only runtime outside `Documents`, because macOS
+privacy protection can block background jobs while they resolve a working
+directory there:
+
+```sh
+chmod +x collector/install_macos_runtime.sh
+collector/install_macos_runtime.sh
+```
+
+Use the included launchd plist as a template. Replace `__RUNTIME_PATH__` with
+the installed runtime's absolute path, `__RAILWAY_PROJECT_ID__` with the linked
+Railway project ID, `__HOME_PATH__` with the user's absolute home directory
+(launchd does not provide `HOME` by default), and `__LOG_PATH__` with a writable
+log directory, then save it as:
 
 `~/Library/LaunchAgents/com.rolandtalk.portanahung-collector.plist`
 
@@ -80,9 +94,9 @@ Load it with:
 launchctl bootstrap "gui/$(id -u)" ~/Library/LaunchAgents/com.rolandtalk.portanahung-collector.plist
 ```
 
-The supplied template invokes `/opt/homebrew/bin/railway run --service
-portanahunggoogsheet`, keeping API secrets in Railway. The five-minute launchd
-interval is only a wake-up tick. `scheduled` evaluates
+The supplied template invokes `railway run` with an explicit project,
+environment, and service, keeping API secrets in Railway. The five-minute
+launchd interval is only a wake-up tick. `scheduled` evaluates
 the current New York time, so US daylight-saving changes do not require plist
 changes. It:
 
