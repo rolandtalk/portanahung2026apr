@@ -588,6 +588,7 @@ export function createMarketDataReplica({ connectionString, logger = console, po
       histories.get(row.symbol)?.push({
         date: row.session_date,
         close: Number(row.close),
+        fetchedAt: new Date(row.fetched_at).toISOString(),
         // Timestamp is only retained for compatibility; all alignment uses the
         // canonical YYYY-MM-DD market session key.
         timestamp: Math.floor(Date.parse(`${row.session_date}T20:00:00.000Z`) / 1000),

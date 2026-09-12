@@ -5,10 +5,14 @@ import {
   applyRegularSessionQuotes,
   aggregateHoldingsBySymbol,
   buildAssetValueCharts,
+  buildSymbolAnalysisDetail,
+  buildSymbolPortfolioBreakdown,
   calculateGrowthAggregate,
   calculateHoldingGrowth,
+  latestSymbolClose,
   normalizeCompletedCandles,
   normalizeRegularSessionQuotes,
+  selectSymbolCurrentPrice,
 } from './server-analysis.js'
 
 function makeAvcPayload() {
@@ -540,4 +544,181 @@ test('keeps AVC comparisons on completed closes when a live benchmark is missing
   assert.equal(result.asOf, '2026-session-061')
   assert.equal(result.charts['20'].dates.at(-1), '2026-session-061')
   assert.ok(Math.abs(result.charts['20'].benchmarks.QQQ.at(-1) - (320 / 280) * 100) < 1e-10)
+})
+
+test('builds Close MA3, reversal minima, and calendar-day DG', () => {
+  const candles = [10, 10, 10, 9, 8, 9, 12].map((close, index) => ({
+    date: `2026-01-0${index + 1}`,
+    close,
+  }))
+  const result = buildSymbolAnalysisDetail(candles)
+
+  assert.equal(result.points.length, 5)
+  assert.deepEqual(result.points[0], {
+    date: '2026-01-03',
+    close: 10,
+    ma3: 10,
+    reversal: false,
+  })
+  assert.deepEqual(
+    result.points.filter(point => point.reversal).map(point => [point.date, point.close]),
+    [['2026-01-05', 8]]
+  )
+  assert.equal(result.asOf, '2026-01-07')
+  assert.equal(result.lastReversalDate, '2026-01-05')
+  assert.equal(result.lastReversalPrice, 8)
+  assert.equal(result.dg, 2)
+})
+
+test('marks the minimum of a trailing Close-below-MA3 run', () => {
+  const candles = [10, 10, 10, 9, 8].map((close, index) => ({
+    date: `2026-02-0${index + 1}`,
+    close,
+  }))
+  const result = buildSymbolAnalysisDetail(candles)
+
+  assert.deepEqual(
+    result.points.filter(point => point.reversal).map(point => [point.date, point.close]),
+    [['2026-02-05', 8]]
+  )
+  assert.equal(result.asOf, '2026-02-05')
+  assert.equal(result.dg, 0)
+})
+
+test('limits symbol detail to 60 plotted points after the MA3 warmup', () => {
+  const candles = Array.from({ length: 70 }, (_, index) => ({
+    date: `2026-${String(Math.floor(index / 28) + 1).padStart(2, '0')}-${String((index % 28) + 1).padStart(2, '0')}`,
+    close: 100 + index,
+  }))
+  const result = buildSymbolAnalysisDetail(candles)
+
+  assert.equal(result.points.length, 60)
+  assert.equal(result.points[0].close, 110)
+  assert.equal(result.points.at(-1).close, 169)
+  assert.equal(result.dg, null)
+  assert.equal(result.lastReversalDate, null)
+  assert.equal(result.lastReversalPrice, null)
+})
+
+test('returns empty symbol detail when fewer than three valid closes exist', () => {
+  const expected = {
+    points: [],
+    asOf: null,
+    dg: null,
+    lastReversalDate: null,
+    lastReversalPrice: null,
+  }
+
+  assert.deepEqual(buildSymbolAnalysisDetail([]), expected)
+  assert.deepEqual(buildSymbolAnalysisDetail([
+    { date: '2026-01-01', close: 10 },
+    { date: '2026-01-02', close: 11 },
+  ]), expected)
+})
+
+test('builds one coherent four-portfolio share and market-value breakdown', () => {
+  const result = buildSymbolPortfolioBreakdown('aapl', {
+    CUB: [
+      { symbol: 'AAPL', shares: 10 },
+      { symbol: 'AAPL', shares: 2.5 },
+      { symbol: 'MSFT', shares: 99 },
+    ],
+    PSC: [{ symbol: 'aapl', shares: 20 }],
+    DBS: [],
+    FT: [{ symbol: 'AAPL', shares: 1 }],
+  }, 200)
+
+  assert.deepEqual(result.portfolios, [
+    { portfolio: 'CUB', shares: 12.5, marketValue: 2500 },
+    { portfolio: 'PSC', shares: 20, marketValue: 4000 },
+    { portfolio: 'DBS', shares: 0, marketValue: 0 },
+    { portfolio: 'FT', shares: 1, marketValue: 200 },
+  ])
+  assert.equal(result.totalShares, 33.5)
+  assert.equal(result.totalMarketValue, 6700)
+})
+
+test('keeps portfolio quantities when a symbol price is unavailable', () => {
+  const result = buildSymbolPortfolioBreakdown('AAA', {
+    CUB: [{ symbol: 'AAA', shares: 3 }],
+    PSC: [],
+    DBS: [],
+    FT: [],
+  }, null)
+
+  assert.equal(result.totalShares, 3)
+  assert.equal(result.totalMarketValue, null)
+  assert.equal(result.portfolios[0].marketValue, null)
+})
+
+test('uses a later-session quote for the symbol popup price', () => {
+  const result = selectSymbolCurrentPrice([
+    { date: '2026-09-10', close: 100, fetchedAt: '2026-09-11T00:00:00Z' },
+  ], {
+    sessionDate: '2026-09-11',
+    price: 103,
+    fetchedAt: '2026-09-11T15:00:00Z',
+    source: 'marketdata.app',
+  }, true)
+
+  assert.deepEqual(result, {
+    currentPrice: 103,
+    currentPriceAsOf: '2026-09-11',
+    currentPriceSource: 'marketdata.app',
+  })
+})
+
+test('does not let an older same-session quote replace a finalized close', () => {
+  const result = selectSymbolCurrentPrice([
+    { date: '2026-09-11', close: 105, fetchedAt: '2026-09-12T01:00:00Z' },
+  ], {
+    sessionDate: '2026-09-11',
+    price: 102,
+    fetchedAt: '2026-09-11T19:00:00Z',
+    source: 'marketdata.app',
+  }, true)
+
+  assert.deepEqual(result, {
+    currentPrice: 105,
+    currentPriceAsOf: '2026-09-11',
+    currentPriceSource: 'completed-close',
+  })
+})
+
+test('uses a fresh same-session quote and ignores an unready quote dataset', () => {
+  const candles = [
+    { date: '2026-09-11', close: 105, fetchedAt: '2026-09-11T20:20:00Z' },
+  ]
+  const quote = {
+    sessionDate: '2026-09-11',
+    price: 106,
+    fetchedAt: '2026-09-11T20:25:00Z',
+    source: 'marketdata.app',
+  }
+
+  assert.equal(selectSymbolCurrentPrice(candles, quote, true).currentPrice, 106)
+  assert.equal(selectSymbolCurrentPrice(candles, quote, false).currentPrice, 105)
+})
+
+test('uses a stored close even before enough points exist for MA3', () => {
+  const result = selectSymbolCurrentPrice([
+    { date: '2026-09-11', close: 42, fetchedAt: '2026-09-12T01:00:00Z' },
+  ], null, false)
+
+  assert.deepEqual(result, {
+    currentPrice: 42,
+    currentPriceAsOf: '2026-09-11',
+    currentPriceSource: 'completed-close',
+  })
+})
+
+test('reports freshness from the latest returned symbol close', () => {
+  assert.deepEqual(latestSymbolClose([
+    { date: '2026-09-10', close: 40, fetchedAt: '2026-09-10T21:00:00Z' },
+    { date: '2026-09-11', close: 42, fetchedAt: '2026-09-12T01:00:00Z' },
+  ]), {
+    date: '2026-09-11',
+    close: 42,
+    fetchedAt: '2026-09-12T01:00:00Z',
+  })
 })

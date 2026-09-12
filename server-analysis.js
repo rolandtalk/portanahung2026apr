@@ -84,6 +84,169 @@ export function normalizeCompletedCandles(raw, now = new Date()) {
   return candles
 }
 
+function calendarDayDistance(startDate, endDate) {
+  const start = Date.parse(`${startDate}T00:00:00.000Z`)
+  const end = Date.parse(`${endDate}T00:00:00.000Z`)
+  if (!Number.isFinite(start) || !Number.isFinite(end)) return null
+  return Math.round((end - start) / 86_400_000)
+}
+
+function normalizedSymbolCloses(candles) {
+  const byDate = new Map()
+  for (const candle of Array.isArray(candles) ? candles : []) {
+    const date = String(candle?.date || '').trim()
+    const close = Number(candle?.close)
+    if (!date || !Number.isFinite(close) || close <= 0) continue
+    byDate.set(date, {
+      date,
+      close,
+      fetchedAt: candle?.fetchedAt || null,
+    })
+  }
+  return [...byDate.values()].sort((left, right) => left.date.localeCompare(right.date))
+}
+
+
+/**
+ * Produces the close/MA3 series used by the per-symbol Analysis dialog.
+ * A reversal is the minimum close in each contiguous run where Close < MA3.
+ * The final run is intentionally closed at the end of the available series.
+ */
+export function buildSymbolAnalysisDetail(candles) {
+  const source = normalizedSymbolCloses(candles).slice(-62)
+  const points = []
+
+  for (let index = 2; index < source.length; index++) {
+    const close = source[index].close
+    const ma3 = (source[index - 2].close + source[index - 1].close + close) / 3
+    points.push({
+      date: source[index].date,
+      close,
+      ma3,
+      reversal: false,
+    })
+  }
+
+  let runMinimumIndex = null
+  const closeRun = () => {
+    if (runMinimumIndex != null) points[runMinimumIndex].reversal = true
+    runMinimumIndex = null
+  }
+
+  for (let index = 0; index < points.length; index++) {
+    const point = points[index]
+    if (point.close < point.ma3) {
+      if (
+        runMinimumIndex == null ||
+        point.close < points[runMinimumIndex].close
+      ) {
+        runMinimumIndex = index
+      }
+    } else {
+      closeRun()
+    }
+  }
+  closeRun()
+
+  const latestPoint = points.at(-1) || null
+  const latestReversal = [...points].reverse().find(point => point.reversal) || null
+
+  return {
+    points,
+    asOf: latestPoint?.date || null,
+    dg: latestPoint && latestReversal
+      ? calendarDayDistance(latestReversal.date, latestPoint.date)
+      : null,
+    lastReversalDate: latestReversal?.date || null,
+    lastReversalPrice: latestReversal?.close ?? null,
+  }
+}
+
+export function latestSymbolClose(candles) {
+  return normalizedSymbolCloses(candles).at(-1) || null
+}
+
+/**
+ * Chooses the price used by the symbol popup and its portfolio values.
+ * A quote from a later market session wins. For the same session, it wins
+ * only when it was fetched at least as recently as the finalized close.
+ */
+export function selectSymbolCurrentPrice(candles, quote, quoteReady = true) {
+  const latestClose = latestSymbolClose(candles)
+  const quotePrice = Number(quote?.price)
+  const quoteDate = String(quote?.sessionDate || '').trim()
+  const quoteFetchedAt = Date.parse(String(quote?.fetchedAt || ''))
+  const closeFetchedAt = Date.parse(String(latestClose?.fetchedAt || ''))
+  const sameSessionQuoteIsFresh = Boolean(
+    latestClose &&
+    quoteDate === latestClose.date &&
+    Number.isFinite(quoteFetchedAt) &&
+    Number.isFinite(closeFetchedAt) &&
+    quoteFetchedAt >= closeFetchedAt
+  )
+  const useQuote = Boolean(
+    quoteReady &&
+    quoteDate &&
+    Number.isFinite(quotePrice) &&
+    quotePrice > 0 &&
+    (
+      !latestClose ||
+      quoteDate > latestClose.date ||
+      sameSessionQuoteIsFresh
+    )
+  )
+
+  if (useQuote) {
+    return {
+      currentPrice: quotePrice,
+      currentPriceAsOf: quoteDate,
+      currentPriceSource: quote.source || 'database-quote',
+    }
+  }
+  if (latestClose) {
+    return {
+      currentPrice: latestClose.close,
+      currentPriceAsOf: latestClose.date,
+      currentPriceSource: 'completed-close',
+    }
+  }
+  return {
+    currentPrice: null,
+    currentPriceAsOf: null,
+    currentPriceSource: null,
+  }
+}
+
+export function buildSymbolPortfolioBreakdown(
+  symbol,
+  holdingsByPortfolio,
+  currentPrice,
+  portfolioKeys = ['CUB', 'PSC', 'DBS', 'FT']
+) {
+  const normalizedSymbol = String(symbol || '').trim().toUpperCase()
+  const hasPrice = currentPrice != null && Number.isFinite(Number(currentPrice))
+  const price = hasPrice ? Number(currentPrice) : null
+  const portfolios = portfolioKeys.map(portfolio => {
+    const shares = (holdingsByPortfolio?.[portfolio] || []).reduce((total, holding) => {
+      if (String(holding?.symbol || '').trim().toUpperCase() !== normalizedSymbol) return total
+      const quantity = Number(holding?.shares)
+      return Number.isFinite(quantity) ? total + quantity : total
+    }, 0)
+    return {
+      portfolio,
+      shares,
+      marketValue: price == null ? null : shares * price,
+    }
+  })
+  const totalShares = portfolios.reduce((total, position) => total + position.shares, 0)
+
+  return {
+    portfolios,
+    totalShares,
+    totalMarketValue: price == null ? null : totalShares * price,
+  }
+}
+
 export function normalizeRegularSessionQuotes(raw) {
   const symbols = Array.isArray(raw?.symbol) ? raw.symbol : []
   const quotes = {}

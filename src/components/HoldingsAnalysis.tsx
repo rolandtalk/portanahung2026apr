@@ -7,6 +7,7 @@ import {
   HoldingsGrowthResponse,
 } from '../services/growth'
 import AssetValueChartModal from './AssetValueChartModal'
+import SymbolDetailModal from './SymbolDetailModal'
 
 type DisplayMode = 'percent' | 'value'
 type SortColumn = 'symbol' | 'marketValue' | GrowthPeriod
@@ -51,6 +52,7 @@ export default function HoldingsAnalysis({ refreshKey }: Props) {
   const [sortDirection, setSortDirection] = useState<SortDirection>('desc')
   const [data, setData] = useState<HoldingsGrowthResponse | null>(null)
   const [avcOpen, setAvcOpen] = useState(false)
+  const [selectedRow, setSelectedRow] = useState<HoldingsGrowthRow | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
@@ -81,6 +83,7 @@ export default function HoldingsAnalysis({ refreshKey }: Props) {
   }
 
   const closeAvc = useCallback(() => setAvcOpen(false), [])
+  const closeSymbolDetail = useCallback(() => setSelectedRow(null), [])
 
   const rows = useMemo(
     () => [...(data?.holdings || [])].sort((a, b) => {
@@ -250,8 +253,16 @@ export default function HoldingsAnalysis({ refreshKey }: Props) {
               <tbody>
                 {rows.map(row => (
                   <tr key={row.symbol} className="border-b border-[#21262d] last:border-b-0 hover:bg-[#1c2128]">
-                    <td className="sticky left-0 z-10 bg-[#161b22] px-3 py-2.5 font-semibold text-blue-400">
-                      {row.symbol}
+                    <td className="sticky left-0 z-10 bg-[#161b22] p-0 font-semibold text-blue-400">
+                      <button
+                        type="button"
+                        onClick={() => setSelectedRow(row)}
+                        aria-haspopup="dialog"
+                        aria-label={`Open ${row.symbol} price history and portfolio holdings`}
+                        className="flex min-h-10 w-full items-center px-3 py-2.5 text-left text-blue-400 transition-colors hover:bg-blue-950/30 hover:text-blue-300 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-blue-500"
+                      >
+                        {row.symbol}
+                      </button>
                     </td>
                     <td className="px-2 py-2.5 text-right text-white">{fmtShares(row.shares)}</td>
                     <td className="px-2 py-2.5 text-right font-medium text-white whitespace-nowrap">
@@ -309,6 +320,7 @@ export default function HoldingsAnalysis({ refreshKey }: Props) {
         </>
       )}
       <AssetValueChartModal open={avcOpen} data={data?.avc || null} onClose={closeAvc} />
+      <SymbolDetailModal row={selectedRow} onClose={closeSymbolDetail} />
     </div>
   )
 }

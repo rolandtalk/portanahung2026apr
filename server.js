@@ -14,11 +14,15 @@ import {
   applyRegularSessionQuotes,
   aggregateHoldingsBySymbol,
   buildAssetValueCharts,
+  buildSymbolAnalysisDetail,
+  buildSymbolPortfolioBreakdown,
   calculateGrowthAggregate,
   calculateHoldingGrowth,
+  latestSymbolClose,
   normalizeCompletedCandles,
   normalizeDailyCandles,
   normalizeRegularSessionQuotes,
+  selectSymbolCurrentPrice,
 } from './server-analysis.js'
 
 // Load .env manually (no dotenv dependency needed)
@@ -1137,6 +1141,83 @@ app.get('/api/holdings/growth', async (_req, res) => {
     res.status(Number(err.statusCode) || 500).json({
       error: 'Failed to calculate holdings growth',
       detail: err.message,
+    })
+  }
+})
+
+/**
+ * GET /api/holdings/symbol/:symbol
+ * Returns a single holding's close/MA3/reversal detail from the Railway
+ * replica. This endpoint never falls back to an external market-data source.
+ */
+app.get('/api/holdings/symbol/:symbol', async (req, res) => {
+  const symbol = String(req.params.symbol || '').trim().toUpperCase()
+  if (!/^[A-Z0-9.^=_:-]{1,32}$/.test(symbol)) {
+    return res.status(400).json({ error: 'Invalid symbol' })
+  }
+  if (!marketDataReplica.configured) {
+    return res.status(503).json({ error: 'Railway price replica is not configured' })
+  }
+
+  try {
+    const [result, portfolioResult, quoteResult] = await Promise.all([
+      marketDataReplica.getDailyCandles([symbol], 62),
+      marketDataReplica.getPortfolios(REPLICA_PORTFOLIOS),
+      marketDataReplica.getQuotes([symbol]).catch(error => {
+        console.warn(`Optional quote read failed for ${symbol}; using completed close:`, error.message)
+        return { ready: false, quotes: {}, missingSymbols: [symbol], state: null }
+      }),
+    ])
+    if (!result.ready) {
+      return res.status(503).json({ error: 'Railway price replica has not been seeded' })
+    }
+    if (!portfolioResult.ready) {
+      return res.status(503).json({ error: 'Railway holdings replica has not been seeded' })
+    }
+
+    const candles = result.histories.get(symbol) || []
+    const detail = buildSymbolAnalysisDetail(candles)
+    const latestClose = latestSymbolClose(candles)
+    const quote = quoteResult.quotes[symbol]
+    const {
+      currentPrice,
+      currentPriceAsOf,
+      currentPriceSource,
+    } = selectSymbolCurrentPrice(candles, quote, quoteResult.ready)
+    const portfolioBreakdown = buildSymbolPortfolioBreakdown(
+      symbol,
+      portfolioResult.portfolios,
+      currentPrice,
+      REPLICA_PORTFOLIOS
+    )
+    const componentRetrievedAt = {
+      prices: latestClose?.fetchedAt || null,
+      quote: quote?.fetchedAt || null,
+      portfolios: Object.fromEntries(REPLICA_PORTFOLIOS.map(portfolio => [
+        portfolio,
+        portfolioResult.states[portfolio]?.generatedAt || null,
+      ])),
+    }
+    const retrievedAt = [
+      latestClose?.fetchedAt,
+      ...(currentPriceSource !== 'completed-close' ? [quote?.fetchedAt] : []),
+      ...Object.values(portfolioResult.states).map(state => state?.generatedAt),
+    ].filter(Boolean).sort().at(0) || null
+    return res.set('Cache-Control', 'no-store').json({
+      symbol,
+      ...detail,
+      currentPrice,
+      currentPriceAsOf,
+      currentPriceSource,
+      portfolioBreakdown,
+      source: 'railway-postgres',
+      retrievedAt,
+      componentRetrievedAt,
+    })
+  } catch (err) {
+    console.error(`Symbol analysis read failed for ${symbol}:`, err.message)
+    return res.status(503).json({
+      error: 'Railway price replica unavailable',
     })
   }
 })
