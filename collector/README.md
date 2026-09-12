@@ -68,8 +68,9 @@ For a harmless provider test, pass an explicit small symbol set to `history`,
 ## Scheduling on macOS
 
 Use the included launchd plist as a template. Replace `__REPOSITORY_PATH__` with
-this checkout's absolute path and `__LOG_PATH__` with a writable log directory,
-then save it as:
+this checkout's absolute path, `__HOME_PATH__` with the user's absolute home
+directory (launchd does not provide `HOME` by default), and `__LOG_PATH__` with
+a writable log directory, then save it as:
 
 `~/Library/LaunchAgents/com.rolandtalk.portanahung-collector.plist`
 
