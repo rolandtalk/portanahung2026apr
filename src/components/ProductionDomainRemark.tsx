@@ -1,6 +1,7 @@
 import React, { useState } from 'react'
 import { API_BASE } from '../services/apiBase'
 
+const WEB_APP_URL = 'https://portana2026apr.rolandtalk.workers.dev/'
 const REPOSITORY_URL = 'https://github.com/rolandtalk/portanahung2026apr'
 const HOLDINGS_SHEET_NAME = 'Portanahung DB 2026 Apr'
 const HOLDINGS_SHEET_URL = 'https://docs.google.com/spreadsheets/d/1XsHYx1Ifb-y2jX2mssDCB7ICW4YnhEsjWiDi3F3UIdE/edit'
@@ -44,7 +45,18 @@ export default function ProductionDomainRemark() {
           className="absolute right-0 top-full z-20 mt-2 w-72 max-w-[calc(100vw-2rem)] rounded-lg border border-[#30363d] bg-[#161b22] p-3 shadow-xl"
         >
           <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-[#8b949e]">
-            Production public domain
+            Production web app
+          </div>
+          <a
+            href={WEB_APP_URL}
+            target="_blank"
+            rel="noreferrer"
+            className="block break-all text-sm text-blue-400 hover:text-blue-300"
+          >
+            {WEB_APP_URL}
+          </a>
+          <div className="mb-1 mt-3 text-xs font-semibold uppercase tracking-wide text-[#8b949e]">
+            Backend API
           </div>
           <a
             href={API_BASE}
