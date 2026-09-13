@@ -3,6 +3,7 @@ import { Holding, PortfolioKey } from '../types'
 import { calcStats } from '../App'
 import { fetchQuoteSnapshot } from '../services/quotes'
 import ProductionDomainRemark from './ProductionDomainRemark'
+import SymbolDetailModal from './SymbolDetailModal'
 
 interface Props {
   portfolioKey: PortfolioKey
@@ -34,6 +35,8 @@ export default function PortfolioPage({ portfolioKey, holdings, onUpdateHoldings
   const [sortDir, setSortDir] = useState<SortDir>('desc')
   const [refreshing, setRefreshing] = useState(false)
   const [refreshError, setRefreshError] = useState<string | null>(null)
+  const [selectedSymbol, setSelectedSymbol] = useState<string | null>(null)
+  const closeSymbolDetail = useCallback(() => setSelectedSymbol(null), [])
 
   const handleRefreshAndSave = useCallback(async () => {
     setRefreshing(true)
@@ -277,7 +280,17 @@ export default function PortfolioPage({ portfolioKey, holdings, onUpdateHoldings
                     }`}
                   >
                     {/* Symbol */}
-                    <td className="px-1 py-2 font-semibold text-white">{h.symbol}</td>
+                    <td className="p-0 font-semibold">
+                      <button
+                        type="button"
+                        onClick={() => setSelectedSymbol(h.symbol)}
+                        aria-haspopup="dialog"
+                        aria-label={`Open ${h.symbol} price history and portfolio holdings`}
+                        className="flex min-h-11 w-full items-center px-1 py-2 text-left text-blue-400 transition-colors hover:bg-blue-950/30 hover:text-blue-300 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-blue-500"
+                      >
+                        {h.symbol}
+                      </button>
+                    </td>
 
                     {/* Shares - editable */}
                     <td className="px-1 py-2 text-right">
@@ -353,6 +366,7 @@ export default function PortfolioPage({ portfolioKey, holdings, onUpdateHoldings
           </table>
         </div>
       </div>
+      <SymbolDetailModal symbol={selectedSymbol} onClose={closeSymbolDetail} />
     </div>
   )
 }

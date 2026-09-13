@@ -1,10 +1,9 @@
 import React, { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { HoldingsGrowthRow } from '../services/growth'
 import { fetchSymbolDetail, SymbolDetailResponse } from '../services/symbolDetail'
 
 interface Props {
-  row: HoldingsGrowthRow | null
+  symbol: string | null
   onClose: () => void
 }
 
@@ -178,7 +177,7 @@ function PriceChart({ detail, compact }: { detail: SymbolDetailResponse; compact
   )
 }
 
-export default function SymbolDetailModal({ row, onClose }: Props) {
+export default function SymbolDetailModal({ symbol, onClose }: Props) {
   const [detail, setDetail] = useState<SymbolDetailResponse | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -192,7 +191,6 @@ export default function SymbolDetailModal({ row, onClose }: Props) {
   const requestIdRef = useRef(0)
   const titleId = useId()
   const descriptionId = useId()
-  const symbol = row?.symbol || null
   const activeDetail = detail?.symbol === symbol ? detail : null
 
   const load = useCallback((activeSymbol: string) => {
@@ -268,7 +266,7 @@ export default function SymbolDetailModal({ row, onClose }: Props) {
     }
   }, [onClose, symbol])
 
-  if (!row || !symbol) return null
+  if (!symbol) return null
 
   const lastReversal = activeDetail?.lastReversal || null
   const lowerSymbol = symbol.toLowerCase()

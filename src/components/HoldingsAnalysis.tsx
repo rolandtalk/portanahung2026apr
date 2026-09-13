@@ -52,7 +52,7 @@ export default function HoldingsAnalysis({ refreshKey }: Props) {
   const [sortDirection, setSortDirection] = useState<SortDirection>('desc')
   const [data, setData] = useState<HoldingsGrowthResponse | null>(null)
   const [avcOpen, setAvcOpen] = useState(false)
-  const [selectedRow, setSelectedRow] = useState<HoldingsGrowthRow | null>(null)
+  const [selectedSymbol, setSelectedSymbol] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
@@ -83,7 +83,7 @@ export default function HoldingsAnalysis({ refreshKey }: Props) {
   }
 
   const closeAvc = useCallback(() => setAvcOpen(false), [])
-  const closeSymbolDetail = useCallback(() => setSelectedRow(null), [])
+  const closeSymbolDetail = useCallback(() => setSelectedSymbol(null), [])
 
   const rows = useMemo(
     () => [...(data?.holdings || [])].sort((a, b) => {
@@ -256,7 +256,7 @@ export default function HoldingsAnalysis({ refreshKey }: Props) {
                     <td className="sticky left-0 z-10 bg-[#161b22] p-0 font-semibold text-blue-400">
                       <button
                         type="button"
-                        onClick={() => setSelectedRow(row)}
+                        onClick={() => setSelectedSymbol(row.symbol)}
                         aria-haspopup="dialog"
                         aria-label={`Open ${row.symbol} price history and portfolio holdings`}
                         className="flex min-h-10 w-full items-center px-3 py-2.5 text-left text-blue-400 transition-colors hover:bg-blue-950/30 hover:text-blue-300 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-blue-500"
@@ -320,7 +320,7 @@ export default function HoldingsAnalysis({ refreshKey }: Props) {
         </>
       )}
       <AssetValueChartModal open={avcOpen} data={data?.avc || null} onClose={closeAvc} />
-      <SymbolDetailModal row={selectedRow} onClose={closeSymbolDetail} />
+      <SymbolDetailModal symbol={selectedSymbol} onClose={closeSymbolDetail} />
     </div>
   )
 }
